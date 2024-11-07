@@ -4,7 +4,6 @@ package keychain
 
 import (
 	"fmt"
-	"unsafe"
 )
 
 type Identity struct {
@@ -12,22 +11,15 @@ type Identity struct {
 }
 
 func Identities() ([]*Identity, error) {
-	keys := []unsafe.Pointer{
-		valOf(kSecClass),
-		valOf(kSecReturnRef),
-		valOf(kSecMatchLimit),
+	query, err := mapToCFDictionary(map[_CFTypeRef]_CFTypeRef{
+		_CFTypeRef(kSecClass):      _CFTypeRef(kSecClassIdentity),
+		_CFTypeRef(kSecReturnRef):  _CFTypeRef(kCFBooleanTrue),
+		_CFTypeRef(kSecMatchLimit): _CFTypeRef(kSecMatchLimitAll),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("creating query: %w", err)
 	}
-	values := []unsafe.Pointer{
-		valOf(kSecClassIdentity),
-		valOf(kCFBooleanTrue),
-		valOf(kSecMatchLimitAll),
-	}
-	query := _CFDictionaryCreate(kCFAllocatorDefault, &keys[0], &values[0], _CFIndex(len(keys)),
-		tPtr[_CFDictionaryKeyCallBacks](kCFTypeDictionaryKeyCallBacks),
-		tPtr[_CFDictionaryValueCallBacks](kCFTypeDictionaryValueCallBacks))
-	if query == _CFDictionaryRef(0) {
-		return nil, fmt.Errorf("creating query failed")
-	}
+
 	defer _CFRelease(_CFTypeRef(query))
 
 	var res _CFTypeRef

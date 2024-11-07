@@ -3,6 +3,7 @@
 package keychain
 
 import (
+	"fmt"
 	"unsafe"
 
 	"github.com/ebitengine/purego"
@@ -17,6 +18,7 @@ type (
 	_CFDictionaryValueCallBacks struct{}
 	_CFStringRef                _CFTypeRef
 	_CFArrayRef                 _CFTypeRef
+	_CFBooleanRef               _CFTypeRef
 	_CFRange                    struct {
 		length   _CFIndex
 		location _CFIndex
@@ -29,9 +31,9 @@ var kCFAllocatorDefault _CFAllocatorRef = 0
 var (
 	corefoundation = dlopen("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation", purego.RTLD_LAZY|purego.RTLD_GLOBAL)
 
-	kCFBooleanTrue                                    = dlsym(corefoundation, "kCFBooleanTrue")
-	kCFTypeDictionaryKeyCallBacks                     = dlsym(corefoundation, "kCFTypeDictionaryKeyCallBacks")
-	kCFTypeDictionaryValueCallBacks                   = dlsym(corefoundation, "kCFTypeDictionaryValueCallBacks")
+	kCFBooleanTrue                  _CFBooleanRef     = _CFBooleanRef(constsym(corefoundation, "kCFBooleanTrue"))
+	kCFTypeDictionaryKeyCallBacks                     = constsym(corefoundation, "kCFTypeDictionaryKeyCallBacks")
+	kCFTypeDictionaryValueCallBacks                   = constsym(corefoundation, "kCFTypeDictionaryValueCallBacks")
 	kCFStringEncodingUTF8           _CFStringEncoding = 0x08000100
 )
 
@@ -54,4 +56,19 @@ func cfStringtoString(s _CFStringRef) string {
 	buf := make([]byte, len-1)
 	_CFStringGetCString(s, buf[:], len, kCFStringEncodingUTF8)
 	return string(buf)
+}
+
+func mapToCFDictionary(m map[_CFTypeRef]_CFTypeRef) (_CFDictionaryRef, error) {
+	keys, values := make([]unsafe.Pointer, 0, len(m)), make([]unsafe.Pointer, 0, len(m))
+	for k, v := range m {
+		keys = append(keys, k.Ptr())
+		values = append(values, v.Ptr())
+	}
+	dict := _CFDictionaryCreate(kCFAllocatorDefault, &keys[0], &values[0], _CFIndex(len(keys)),
+		tPtr[_CFDictionaryKeyCallBacks](kCFTypeDictionaryKeyCallBacks),
+		tPtr[_CFDictionaryValueCallBacks](kCFTypeDictionaryValueCallBacks))
+	if dict == _CFDictionaryRef(0) {
+		return _CFDictionaryRef(0), fmt.Errorf("creating dictionary failed")
+	}
+	return dict, nil
 }

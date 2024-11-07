@@ -12,3 +12,13 @@ func TestString(t *testing.T) {
 		t.Errorf("want %s, got: %s", in, out)
 	}
 }
+
+func TestMap(t *testing.T) {
+	dict, err := mapToCFDictionary(map[_CFTypeRef]_CFTypeRef{
+		_CFTypeRef(stringToCFString("hello")): _CFTypeRef(stringToCFString("world")),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = dict
+}

@@ -21,11 +21,11 @@ const ( // https://gist.github.com/lefloh/3b4200a8eca40eb3c5596e6b6a7d83e5
 var (
 	security = dlopen("/System/Library/Frameworks/Security.framework/Security", purego.RTLD_LAZY|purego.RTLD_GLOBAL)
 
-	kSecClassIdentity = dlsym(security, "kSecClassIdentity")
-	kSecMatchLimitAll = dlsym(security, "kSecMatchLimitAll")
-	kSecClass         = dlsym(security, "kSecClass")
-	kSecReturnRef     = dlsym(security, "kSecReturnRef")
-	kSecMatchLimit    = dlsym(security, "kSecMatchLimit")
+	kSecClassIdentity _CFStringRef = _CFStringRef(constsym(security, "kSecClassIdentity"))
+	kSecMatchLimitAll _CFStringRef = _CFStringRef(constsym(security, "kSecMatchLimitAll"))
+	kSecClass         _CFStringRef = _CFStringRef(constsym(security, "kSecClass"))
+	kSecReturnRef     _CFStringRef = _CFStringRef(constsym(security, "kSecReturnRef"))
+	kSecMatchLimit    _CFStringRef = _CFStringRef(constsym(security, "kSecMatchLimit"))
 )
 
 var (
