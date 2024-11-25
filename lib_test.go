@@ -17,5 +17,5 @@ func TestDoubleDeref(t *testing.T) {
 }*/
 
 func TestConstDeref(t *testing.T) {
-	t.Logf(cfStringtoString(kSecMatchLimit))
+	t.Log(cfStringtoString(kSecMatchLimit))
 }

@@ -20,11 +20,7 @@ func dlsym(handle uintptr, name string) uintptr {
 // the memory location it's at. seems to be good for the kSec types, where the
 // type is a pointer and we want that pointer, not the pointer to a pointer.
 func constsym(handle uintptr, name string) uintptr {
-	h, err := purego.Dlsym(handle, name)
-	if err != nil {
-		panic(err)
-	}
-	return uintptr(**(**unsafe.Pointer)(unsafe.Pointer(&h)))
+	return uintptr(valOf(dlsym(handle, name)))
 }
 
 func dlopen(path string, mode int) uintptr {
