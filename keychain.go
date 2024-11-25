@@ -25,6 +25,9 @@ func Identities() ([]*Identity, error) {
 	var res _CFTypeRef
 	osstatus := _SecItemCopyMatching(query, &res)
 	if err := secOSStatusErr(osstatus); err != nil {
+		if err.Code == errSecItemNotFound {
+			return nil, nil
+		}
 		return nil, fmt.Errorf("error copying item from query: %w", err)
 	}
 	defer _CFRelease(res)
