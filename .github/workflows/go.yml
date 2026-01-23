@@ -7,20 +7,23 @@ jobs:
     runs-on: macos-latest
     env:
       GOTOOLCHAIN: local
+      CGO_ENABLED: 0
+      TEST_KEYCHAIN: 1
+      TEST_CTK_IDENTITY: 1
     strategy:
       matrix:
-        go: [ stable, oldstable ]
+        go: [stable] #[ stable, oldstable ]
 
     steps:
+
+    - name: Check out code into the Go module directory
+      uses: actions/checkout@v4
 
     - name: Set up Go ${{ matrix.go }}
       uses: actions/setup-go@v5
       with:
         go-version: ${{ matrix.go }}
       id: go
-
-    - name: Check out code into the Go module directory
-      uses: actions/checkout@v4
 
     - name: Get dependencies
       run: go mod download
@@ -29,9 +32,9 @@ jobs:
       run: go build ./...
 
     - name: Test
-      run: go test ./...
+      run: go test -v ./...
 
     - name: Lint
-      uses: golangci/golangci-lint-action@v6
+      uses: golangci/golangci-lint-action@v9
       with:
         version: latest
