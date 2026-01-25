@@ -3,16 +3,17 @@ on: [push]
 jobs:
 
   build:
-    name: Build
+    name: Go ${{ matrix.go }} (CGO ${{ matrix.cgo == '1' && 'enabled' || 'disabled' }})
     runs-on: macos-latest
     env:
       GOTOOLCHAIN: local
-      CGO_ENABLED: 0
+      CGO_ENABLED: ${{ matrix.cgo }}
       TEST_KEYCHAIN: 1
       TEST_CTK_IDENTITY: 1
     strategy:
       matrix:
         go: [stable] #[ stable, oldstable ]
+        cgo: ['0', '1']
 
     steps:
 
