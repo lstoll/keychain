@@ -5,11 +5,16 @@ package keychain
 import "testing"
 
 func TestSecOSStatusErr(t *testing.T) {
-	if err := secOSStatusErr(errSecSuccess); err != nil {
+	sec, err := getSecurity()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := sec.newError(errSecSuccess); err != nil {
 		t.Errorf("wanted nil err, got: %v", err)
 	}
 
-	err := secOSStatusErr(errSecItemNotFound)
+	err = sec.newError(errSecItemNotFound)
 	if err == nil {
 		t.Error("wanted err, got nil")
 	}
@@ -17,7 +22,7 @@ func TestSecOSStatusErr(t *testing.T) {
 		t.Errorf("unexpected message: %s", err.Error())
 	}
 
-	err = secOSStatusErr(_OSStatus(128000)) // hopefully not defined
+	err = sec.newError(_OSStatus(128000)) // hopefully not defined
 	if err == nil {
 		t.Error("wanted err, got nil")
 	}

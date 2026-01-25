@@ -79,48 +79,55 @@ const (
 // getSelfCDHashes retrieves a map of all Code Directory Hashes (CDHashes) for
 // the running binary, keyed by their digest algorithm type.
 func getSelfCDHashes() (map[CodeSignatureHash]string, error) {
+	cf, err := getCoreFoundation()
+	if err != nil {
+		return nil, err
+	}
+	sec, err := getSecurity()
+	if err != nil {
+		return nil, err
+	}
+
 	// Get a reference to the static code of the currently running process.
 	var myselfCode _SecCodeRef
-	status := _SecCodeCopySelf(kSecCSDefaultFlags, &myselfCode)
-	if err := secOSStatusErr(status); err != nil {
+	status := sec.CodeCopySelf(kSecCSDefaultFlags, &myselfCode)
+	if err := sec.newError(status); err != nil {
 		return nil, fmt.Errorf("failed to get SecCodeRef for self: %w", err)
 	}
-	defer _CFRelease(_CFTypeRef(myselfCode))
+	defer cf.Release(_CFTypeRef(myselfCode))
 
 	// Validate the code signature first, to see if we're signed and it's valid.
 	// If not, we can fallback later.
-	status = _SecCodeCheckValidity(myselfCode, kSecCSDefaultFlags, 0)
-	if err := secOSStatusErr(status); err != nil {
+	status = sec.CodeCheckValidity(myselfCode, kSecCSDefaultFlags, 0)
+	if err := sec.newError(status); err != nil {
 		return nil, err
 	}
 
 	// Get the code signing information dictionary.
 	var signingInfo _CFDictionaryRef
 	// SecStaticCodeRef is same as SecCodeRef in structure (ptr), just stricter type in C.
-	status = _SecCodeCopySigningInformation(_SecStaticCodeRef(myselfCode), kSecCSDefaultFlags, &signingInfo)
-	if err := secOSStatusErr(status); err != nil {
+	status = sec.CodeCopySigningInformation(_SecStaticCodeRef(myselfCode), kSecCSDefaultFlags, &signingInfo)
+	if err := sec.newError(status); err != nil {
 		return nil, fmt.Errorf("failed to copy signing information: %w", err)
 	}
-	defer _CFRelease(_CFTypeRef(signingInfo))
+	defer cf.Release(_CFTypeRef(signingInfo))
 
-	signingInfoMap := mapFromCFDictionary(signingInfo)
+	hashesPtr := cf.GetDictionaryValue(signingInfo, sec.CodeInfoCdHashes)
+	algsPtr := cf.GetDictionaryValue(signingInfo, sec.CodeInfoDigestAlgorithms)
 
-	hashesPtr, hashesOk := cfDictLookup(signingInfoMap, kSecCodeInfoCdHashes)
-	algsPtr, algsOk := cfDictLookup(signingInfoMap, kSecCodeInfoDigestAlgorithms)
-
-	if !hashesOk || !algsOk {
+	if hashesPtr == 0 || algsPtr == 0 {
 		return nil, fmt.Errorf("kSecCodeInfoCdHashes or kSecCodeInfoDigestAlgorithms key not found")
 	}
 
-	if _CFGetTypeID(hashesPtr) != _CFArrayGetTypeID() || _CFGetTypeID(algsPtr) != _CFArrayGetTypeID() {
+	if cf.GetTypeID(hashesPtr) != cf.ArrayGetTypeID() || cf.GetTypeID(algsPtr) != cf.ArrayGetTypeID() {
 		return nil, fmt.Errorf("hashes or algorithms value is not a CFArray")
 	}
 
 	hashesArray := _CFArrayRef(hashesPtr)
 	algsArray := _CFArrayRef(algsPtr)
 
-	hashesSlice := goSliceFromCFArray(hashesArray)
-	algsSlice := goSliceFromCFArray(algsArray)
+	hashesSlice := cf.GoSliceFromCFArray(hashesArray)
+	algsSlice := cf.GoSliceFromCFArray(algsArray)
 
 	if len(hashesSlice) != len(algsSlice) {
 		return nil, fmt.Errorf("hashes and algorithms arrays have different lengths")
@@ -132,23 +139,23 @@ func getSelfCDHashes() (map[CodeSignatureHash]string, error) {
 	resultMap := make(map[CodeSignatureHash]string)
 	for i := range hashesSlice {
 		algPtr := algsSlice[i]
-		if _CFGetTypeID(algPtr) != _CFNumberGetTypeID() {
+		if cf.GetTypeID(algPtr) != cf.NumberGetTypeID() {
 			continue // Skip if not a number
 		}
 		var algID int32
-		if !_CFNumberGetValue(_CFNumberRef(algPtr), kCFNumberIntType, unsafe.Pointer(&algID)) {
+		if !cf.NumberGetValue(_CFNumberRef(algPtr), cf.NumberIntType, unsafe.Pointer(&algID)) {
 			continue
 		}
 
 		hashPtr := hashesSlice[i]
-		if _CFGetTypeID(hashPtr) != _CFDataGetTypeID() {
+		if cf.GetTypeID(hashPtr) != cf.DataGetTypeID() {
 			continue // Skip if not data
 		}
 		hashData := _CFDataRef(hashPtr)
 
-		hashBytes := bytesFromCFData(hashData)
+		hashBytes := cf.BytesFromCFData(hashData)
 		if len(hashBytes) > 0 {
-			algName, err := mapAlgorithmIDToString(algID)
+			algName, err := mapAlgorithmIDToString(algID, sec)
 			if err != nil {
 				return nil, fmt.Errorf("failed to map algorithm ID to string: %w", err)
 			}
@@ -160,17 +167,17 @@ func getSelfCDHashes() (map[CodeSignatureHash]string, error) {
 }
 
 // mapAlgorithmIDToString converts a macOS digest algorithm constant to a string.
-func mapAlgorithmIDToString(algID int32) (CodeSignatureHash, error) {
+func mapAlgorithmIDToString(algID int32, sec *securityFramework) (CodeSignatureHash, error) {
 	switch algID {
-	case kSecCodeSignatureHashSHA1:
+	case sec.CodeSignatureHashSHA1:
 		return CodeSignatureHashSHA1, nil
-	case kSecCodeSignatureHashSHA256:
+	case sec.CodeSignatureHashSHA256:
 		return CodeSignatureHashSHA256, nil
-	case kSecCodeSignatureHashSHA256Truncated:
+	case sec.CodeSignatureHashSHA256Truncated:
 		return CodeSignatureHashSHA256Truncated, nil
-	case kSecCodeSignatureHashSHA384:
+	case sec.CodeSignatureHashSHA384:
 		return CodeSignatureHashSHA384, nil
-	case kSecCodeSignatureHashSHA512:
+	case sec.CodeSignatureHashSHA512:
 		return CodeSignatureHashSHA512, nil
 	default:
 		return "", fmt.Errorf("unknown code signature hash algorithm: %d", algID)
