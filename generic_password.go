@@ -35,55 +35,55 @@ type GenericPassword struct {
 	GenericAttributes []byte
 }
 
-func (g *GenericPassword) toAttributes() (_CFDictionaryRef, error) {
+func (g *GenericPassword) toAttributes(cf *coreFoundation, sec *securityFramework) (_CFDictionaryRef, error) {
 	attrs := map[_CFTypeRef]_CFTypeRef{
-		_CFTypeRef(kSecClass): _CFTypeRef(kSecClassGenericPassword),
+		_CFTypeRef(sec.Class): _CFTypeRef(sec.ClassGenericPassword),
 	}
 
 	if g.Account != "" {
-		accountRef := stringToCFString(g.Account)
-		defer _CFRelease(_CFTypeRef(accountRef))
-		attrs[_CFTypeRef(kSecAttrAccount)] = _CFTypeRef(accountRef)
+		accountRef := cf.StringToCFString(g.Account)
+		defer cf.Release(_CFTypeRef(accountRef))
+		attrs[_CFTypeRef(sec.AttrAccount)] = _CFTypeRef(accountRef)
 	}
 	if g.Service != "" {
-		serviceRef := stringToCFString(g.Service)
-		defer _CFRelease(_CFTypeRef(serviceRef))
-		attrs[_CFTypeRef(kSecAttrService)] = _CFTypeRef(serviceRef)
+		serviceRef := cf.StringToCFString(g.Service)
+		defer cf.Release(_CFTypeRef(serviceRef))
+		attrs[_CFTypeRef(sec.AttrService)] = _CFTypeRef(serviceRef)
 	}
 	if g.Label != "" {
-		labelRef := stringToCFString(g.Label)
-		defer _CFRelease(_CFTypeRef(labelRef))
-		attrs[_CFTypeRef(kSecAttrLabel)] = _CFTypeRef(labelRef)
+		labelRef := cf.StringToCFString(g.Label)
+		defer cf.Release(_CFTypeRef(labelRef))
+		attrs[_CFTypeRef(sec.AttrLabel)] = _CFTypeRef(labelRef)
 	}
 	if len(g.GenericAttributes) > 0 {
-		genericRef := bytesToCFData(g.GenericAttributes)
-		defer _CFRelease(_CFTypeRef(genericRef))
-		attrs[_CFTypeRef(kSecAttrGeneric)] = _CFTypeRef(genericRef)
+		genericRef := cf.BytesToCFData(g.GenericAttributes)
+		defer cf.Release(_CFTypeRef(genericRef))
+		attrs[_CFTypeRef(sec.AttrGeneric)] = _CFTypeRef(genericRef)
 	}
 	if len(g.Value) > 0 {
-		valueRef := bytesToCFData(g.Value)
-		defer _CFRelease(_CFTypeRef(valueRef))
-		attrs[_CFTypeRef(kSecValueData)] = _CFTypeRef(valueRef)
+		valueRef := cf.BytesToCFData(g.Value)
+		defer cf.Release(_CFTypeRef(valueRef))
+		attrs[_CFTypeRef(sec.ValueData)] = _CFTypeRef(valueRef)
 	}
 
-	return mapToCFDictionary(attrs)
+	return cf.MapToCFDictionary(attrs)
 }
 
-func newGenericPasswordFromResult(result map[_CFTypeRef]_CFTypeRef) (GenericPassword, error) {
+func newGenericPasswordFromResult(result _CFDictionaryRef, cf *coreFoundation, sec *securityFramework) (GenericPassword, error) {
 	gpa := GenericPassword{}
-	if account, ok := getStringAttr(result, kSecAttrAccount); ok {
+	if account, ok := cf.GetDictionaryString(result, sec.AttrAccount); ok {
 		gpa.Account = account
 	}
-	if service, ok := getStringAttr(result, kSecAttrService); ok {
+	if service, ok := cf.GetDictionaryString(result, sec.AttrService); ok {
 		gpa.Service = service
 	}
-	if label, ok := getStringAttr(result, kSecAttrLabel); ok {
+	if label, ok := cf.GetDictionaryString(result, sec.AttrLabel); ok {
 		gpa.Label = label
 	}
-	if generic, ok := getDataAttr(result, kSecAttrGeneric); ok {
+	if generic, ok := cf.GetDictionaryData(result, sec.AttrGeneric); ok {
 		gpa.GenericAttributes = generic
 	}
-	if value, ok := getDataAttr(result, kSecValueData); ok {
+	if value, ok := cf.GetDictionaryData(result, sec.ValueData); ok {
 		gpa.Value = value
 	}
 
@@ -91,14 +91,23 @@ func newGenericPasswordFromResult(result map[_CFTypeRef]_CFTypeRef) (GenericPass
 }
 
 func CreateGenericPassword(args GenericPassword) error {
-	attrs, err := args.toAttributes()
+	cf, err := getCoreFoundation()
 	if err != nil {
 		return err
 	}
-	defer _CFRelease(_CFTypeRef(attrs))
+	sec, err := getSecurity()
+	if err != nil {
+		return err
+	}
 
-	status := _SecItemAdd(attrs, nil)
-	if err := secOSStatusErr(status); err != nil {
+	attrs, err := args.toAttributes(cf, sec)
+	if err != nil {
+		return err
+	}
+	defer cf.Release(_CFTypeRef(attrs))
+
+	status := sec.ItemAdd(attrs, nil)
+	if err := sec.OSStatusErr(status); err != nil {
 		return fmt.Errorf("creating generic password: %w", err)
 	}
 
@@ -116,98 +125,118 @@ type GenericPasswordQuery struct {
 	Service string
 }
 
-func (g *GenericPasswordQuery) toQueryMap(addlAttrs map[_CFTypeRef]_CFTypeRef) (_CFDictionaryRef, error) {
+func (g *GenericPasswordQuery) toQueryMap(addlAttrs map[_CFTypeRef]_CFTypeRef, cf *coreFoundation, sec *securityFramework) (_CFDictionaryRef, error) {
 	query := map[_CFTypeRef]_CFTypeRef{
-		_CFTypeRef(kSecClass): _CFTypeRef(kSecClassGenericPassword),
+		_CFTypeRef(sec.Class): _CFTypeRef(sec.ClassGenericPassword),
 	}
 
 	if g.Account != "" {
-		accountRef := stringToCFString(g.Account)
-		defer _CFRelease(_CFTypeRef(accountRef))
-		query[_CFTypeRef(kSecAttrAccount)] = _CFTypeRef(accountRef)
+		accountRef := cf.StringToCFString(g.Account)
+		defer cf.Release(_CFTypeRef(accountRef))
+		query[_CFTypeRef(sec.AttrAccount)] = _CFTypeRef(accountRef)
 	}
 
 	if g.Service != "" {
-		serviceRef := stringToCFString(g.Service)
-		defer _CFRelease(_CFTypeRef(serviceRef))
-		query[_CFTypeRef(kSecAttrService)] = _CFTypeRef(serviceRef)
+		serviceRef := cf.StringToCFString(g.Service)
+		defer cf.Release(_CFTypeRef(serviceRef))
+		query[_CFTypeRef(sec.AttrService)] = _CFTypeRef(serviceRef)
 	}
 
 	maps.Copy(query, addlAttrs)
 
-	return mapToCFDictionary(query)
+	return cf.MapToCFDictionary(query)
 }
 
 func GetGenericPasswordAttributes(query GenericPasswordQuery) (GenericPassword, error) {
-	q, err := query.toQueryMap(map[_CFTypeRef]_CFTypeRef{
-		_CFTypeRef(kSecReturnAttributes): _CFTypeRef(kCFBooleanTrue),
-		_CFTypeRef(kSecMatchLimit):       _CFTypeRef(kSecMatchLimitOne),
-	})
+	cf, err := getCoreFoundation()
 	if err != nil {
 		return GenericPassword{}, err
 	}
-	defer _CFRelease(_CFTypeRef(q))
+	sec, err := getSecurity()
+	if err != nil {
+		return GenericPassword{}, err
+	}
+
+	q, err := query.toQueryMap(map[_CFTypeRef]_CFTypeRef{
+		_CFTypeRef(sec.ReturnAttributes): _CFTypeRef(cf.BooleanTrue),
+		_CFTypeRef(sec.MatchLimit):       _CFTypeRef(sec.MatchLimitOne),
+	}, cf, sec)
+	if err != nil {
+		return GenericPassword{}, err
+	}
+	defer cf.Release(_CFTypeRef(q))
 
 	var r _CFTypeRef
-	status := _SecItemCopyMatching(q, &r)
-	if err := secOSStatusErr(status); err != nil {
+	status := sec.ItemCopyMatching(q, &r)
+	if err := sec.OSStatusErr(status); err != nil {
 		return GenericPassword{}, fmt.Errorf("getting generic password attributes: %w", err)
 	}
-	defer _CFRelease(_CFTypeRef(r))
+	defer cf.Release(_CFTypeRef(r))
 
-	result := mapFromCFDictionary(_CFDictionaryRef(r))
-
-	return newGenericPasswordFromResult(result)
+	return newGenericPasswordFromResult(_CFDictionaryRef(r), cf, sec)
 }
 
 func GetGenericPassword(query GenericPasswordQuery) ([]byte, error) {
-	q, err := query.toQueryMap(map[_CFTypeRef]_CFTypeRef{
-		_CFTypeRef(kSecReturnData): _CFTypeRef(kCFBooleanTrue),
-		_CFTypeRef(kSecMatchLimit): _CFTypeRef(kSecMatchLimitOne),
-	})
+	cf, err := getCoreFoundation()
 	if err != nil {
 		return nil, err
 	}
-	defer _CFRelease(_CFTypeRef(q))
+	sec, err := getSecurity()
+	if err != nil {
+		return nil, err
+	}
+
+	q, err := query.toQueryMap(map[_CFTypeRef]_CFTypeRef{
+		_CFTypeRef(sec.ReturnData): _CFTypeRef(cf.BooleanTrue),
+		_CFTypeRef(sec.MatchLimit): _CFTypeRef(sec.MatchLimitOne),
+	}, cf, sec)
+	if err != nil {
+		return nil, err
+	}
+	defer cf.Release(_CFTypeRef(q))
 
 	var r _CFTypeRef
-	status := _SecItemCopyMatching(q, &r)
-	if err := secOSStatusErr(status); err != nil {
+	status := sec.ItemCopyMatching(q, &r)
+	if err := sec.OSStatusErr(status); err != nil {
 		return nil, fmt.Errorf("getting generic password attributes: %w", err)
 	}
-	defer _CFRelease(_CFTypeRef(r))
+	defer cf.Release(_CFTypeRef(r))
 
-	return bytesFromCFData(_CFDataRef(r)), nil
+	return cf.BytesFromCFData(_CFDataRef(r)), nil
 }
 
 func ListGenericPasswords(query GenericPasswordQuery) ([]GenericPassword, error) {
-	q, err := query.toQueryMap(map[_CFTypeRef]_CFTypeRef{
-		_CFTypeRef(kSecReturnAttributes): _CFTypeRef(kCFBooleanTrue),
-		_CFTypeRef(kSecMatchLimit):       _CFTypeRef(kSecMatchLimitAll),
-	})
+	cf, err := getCoreFoundation()
 	if err != nil {
 		return nil, err
 	}
-	defer _CFRelease(_CFTypeRef(q))
+	sec, err := getSecurity()
+	if err != nil {
+		return nil, err
+	}
+
+	q, err := query.toQueryMap(map[_CFTypeRef]_CFTypeRef{
+		_CFTypeRef(sec.ReturnAttributes): _CFTypeRef(cf.BooleanTrue),
+		_CFTypeRef(sec.MatchLimit):       _CFTypeRef(sec.MatchLimitAll),
+	}, cf, sec)
+	if err != nil {
+		return nil, err
+	}
+	defer cf.Release(_CFTypeRef(q))
 
 	var r _CFTypeRef
-	status := _SecItemCopyMatching(q, &r)
-	if err := secOSStatusErr(status); err != nil {
+	status := sec.ItemCopyMatching(q, &r)
+	if err := sec.OSStatusErr(status); err != nil {
 		return nil, fmt.Errorf("listing generic passwords: %w", err)
 	}
-	defer _CFRelease(_CFTypeRef(r))
+	defer cf.Release(_CFTypeRef(r))
 
-	// result can be a single item if only one matches?
-	// But we asked for All. Usually it returns Array even if one.
-	// But check type just in case or rely on MatchLimitAll behavior.
-	// The C API documentation says it returns an array for MatchLimitAll.
-
-	result := goSliceFromCFArray(_CFArrayRef(r))
+	result := cf.GoSliceFromCFArray(_CFArrayRef(r))
 
 	passwords := make([]GenericPassword, len(result))
 	for i, r := range result {
 		var err error
-		passwords[i], err = newGenericPasswordFromResult(mapFromCFDictionary(_CFDictionaryRef(r)))
+		passwords[i], err = newGenericPasswordFromResult(_CFDictionaryRef(r), cf, sec)
 		if err != nil {
 			return nil, fmt.Errorf("listing generic passwords: %w", err)
 		}
@@ -219,20 +248,29 @@ func ListGenericPasswords(query GenericPasswordQuery) ([]GenericPassword, error)
 // DeleteGenericPassword deletes all items from the keychain that match the
 // query.
 func DeleteGenericPassword(query GenericPasswordQuery) error {
+	cf, err := getCoreFoundation()
+	if err != nil {
+		return err
+	}
+	sec, err := getSecurity()
+	if err != nil {
+		return err
+	}
+
 	if query.Service == "" && query.Account == "" {
 		return fmt.Errorf("cannot delete generic password without service or account")
 	}
 
 	q, err := query.toQueryMap(map[_CFTypeRef]_CFTypeRef{
-		_CFTypeRef(kSecMatchLimit): _CFTypeRef(kSecMatchLimitAll),
-	})
+		_CFTypeRef(sec.MatchLimit): _CFTypeRef(sec.MatchLimitAll),
+	}, cf, sec)
 	if err != nil {
 		return err
 	}
-	defer _CFRelease(_CFTypeRef(q))
+	defer cf.Release(_CFTypeRef(q))
 
-	status := _SecItemDelete(q)
-	if err := secOSStatusErr(status); err != nil {
+	status := sec.ItemDelete(q)
+	if err := sec.OSStatusErr(status); err != nil {
 		return fmt.Errorf("deleting generic password: %w", err)
 	}
 

@@ -8,6 +8,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/x509"
+	"errors"
 	"fmt"
 	"io"
 	"runtime"
@@ -80,18 +81,27 @@ func (i *Identity) Delete() error {
 		}
 		return DeleteCTKIdentity(hash)
 	case IdentityTypeSecIdentity:
+		cf, err := getCoreFoundation()
+		if err != nil {
+			return err
+		}
+		sec, err := getSecurity()
+		if err != nil {
+			return err
+		}
+
 		if i.identityRef == 0 {
 			return fmt.Errorf("cannot delete SecIdentity: no identity ref")
 		}
-		query, err := mapToCFDictionary(map[_CFTypeRef]_CFTypeRef{
-			_CFTypeRef(kSecClass):    _CFTypeRef(kSecClassIdentity),
-			_CFTypeRef(kSecValueRef): _CFTypeRef(i.identityRef),
+		query, err := cf.MapToCFDictionary(map[_CFTypeRef]_CFTypeRef{
+			_CFTypeRef(sec.Class):    _CFTypeRef(sec.ClassIdentity),
+			_CFTypeRef(sec.ValueRef): _CFTypeRef(i.identityRef),
 		})
 		if err != nil {
 			return err
 		}
-		defer _CFRelease(_CFTypeRef(query))
-		return secOSStatusErr(_SecItemDelete(query))
+		defer cf.Release(_CFTypeRef(query))
+		return sec.OSStatusErr(sec.ItemDelete(query))
 	default:
 		return fmt.Errorf("cannot delete identity: unknown type %v", i.identityType)
 	}
@@ -99,12 +109,21 @@ func (i *Identity) Delete() error {
 
 // Signer returns the private key as a crypto.Signer.
 func (i *Identity) Signer() (crypto.Signer, error) {
+	cf, err := getCoreFoundation()
+	if err != nil {
+		return nil, err
+	}
+	sec, err := getSecurity()
+	if err != nil {
+		return nil, err
+	}
+
 	if i.identityRef == 0 {
 		return nil, fmt.Errorf("no key available")
 	}
 
 	var keyRef _SecKeyRef
-	if err := secOSStatusErr(_SecIdentityCopyPrivateKey(i.identityRef, &keyRef)); err != nil {
+	if err := sec.OSStatusErr(sec.IdentityCopyPrivateKey(i.identityRef, &keyRef)); err != nil {
 		return nil, fmt.Errorf("copying private key: %w", err)
 	}
 
@@ -127,21 +146,21 @@ func (i *Identity) Signer() (crypto.Signer, error) {
 	}
 
 	// Get the public key from the private key ref
-	pubKeyRef := _SecKeyCopyPublicKey(keyRef)
+	pubKeyRef := sec.KeyCopyPublicKey(keyRef)
 	if pubKeyRef == 0 {
 		return nil, fmt.Errorf("failed to get public key from private key")
 	}
-	defer _CFRelease(_CFTypeRef(pubKeyRef))
+	defer cf.Release(_CFTypeRef(pubKeyRef))
 
 	// Export the public key as external representation
 	var cfError _CFErrorRef
-	pubKeyData := _SecKeyCopyExternalRepresentation(pubKeyRef, &cfError)
+	pubKeyData := sec.KeyCopyExternalRepresentation(pubKeyRef, &cfError)
 	if pubKeyData == 0 {
 		return nil, fmt.Errorf("failed to export public key")
 	}
-	defer _CFRelease(_CFTypeRef(pubKeyData))
+	defer cf.Release(_CFTypeRef(pubKeyData))
 
-	pubKeyBytes := bytesFromCFData(pubKeyData)
+	pubKeyBytes := cf.BytesFromCFData(pubKeyData)
 
 	pubKey, err := ecdsa.ParseUncompressedPublicKey(curve, pubKeyBytes)
 	if err != nil {
@@ -149,12 +168,14 @@ func (i *Identity) Signer() (crypto.Signer, error) {
 	}
 
 	spk := &secKeyPrivateKey{
+		cf:     cf,
+		sec:    sec,
 		keyRef: keyRef,
 		pub:    pubKey,
 	}
 
 	runtime.AddCleanup(spk, func(keyRef _SecKeyRef) {
-		_CFRelease(_CFTypeRef(keyRef))
+		cf.Release(_CFTypeRef(keyRef))
 	}, keyRef)
 
 	return spk, nil
@@ -162,6 +183,8 @@ func (i *Identity) Signer() (crypto.Signer, error) {
 
 // secKeyPrivateKey implements crypto.Signer using a SecKeyRef.
 type secKeyPrivateKey struct {
+	cf     *coreFoundation
+	sec    *securityFramework
 	keyRef _SecKeyRef
 	pub    *ecdsa.PublicKey
 }
@@ -174,26 +197,26 @@ func (s *secKeyPrivateKey) Sign(_ io.Reader, digest []byte, opts crypto.SignerOp
 	var algorithm _SecKeyAlgorithm
 	switch opts.HashFunc() {
 	case crypto.SHA256:
-		algorithm = kSecKeyAlgorithmECDSASignatureDigestX962SHA256
+		algorithm = s.sec.KeyAlgorithmECDSASignatureDigestX962SHA256
 	case crypto.SHA384:
-		algorithm = kSecKeyAlgorithmECDSASignatureDigestX962SHA384
+		algorithm = s.sec.KeyAlgorithmECDSASignatureDigestX962SHA384
 	case crypto.SHA512:
-		algorithm = kSecKeyAlgorithmECDSASignatureDigestX962SHA512
+		algorithm = s.sec.KeyAlgorithmECDSASignatureDigestX962SHA512
 	default:
 		return nil, fmt.Errorf("unsupported hash function: %v", opts.HashFunc())
 	}
 
-	digestData := bytesToCFData(digest)
-	defer _CFRelease(_CFTypeRef(digestData))
+	digestData := s.cf.BytesToCFData(digest)
+	defer s.cf.Release(_CFTypeRef(digestData))
 
 	var cfError _CFErrorRef
-	signature := _SecKeyCreateSignature(s.keyRef, algorithm, digestData, &cfError)
+	signature := s.sec.KeyCreateSignature(s.keyRef, algorithm, digestData, &cfError)
 	if signature == 0 {
 		return nil, fmt.Errorf("SecKeyCreateSignature failed")
 	}
-	defer _CFRelease(_CFTypeRef(signature))
+	defer s.cf.Release(_CFTypeRef(signature))
 
-	return bytesFromCFData(signature), nil
+	return s.cf.BytesFromCFData(signature), nil
 }
 
 // IdentityQueryType specifies which types of identities to include in a query.
@@ -240,69 +263,76 @@ func GetIdentity(query IdentityQuery) (*Identity, error) {
 
 // listIdentities queries kSecClassIdentity and detects CTK identities by their token ID.
 func ListIdentities(query IdentityQuery) ([]*Identity, error) {
+	cf, err := getCoreFoundation()
+	if err != nil {
+		return nil, err
+	}
+	sec, err := getSecurity()
+	if err != nil {
+		return nil, err
+	}
+
 	queryMap := map[_CFTypeRef]_CFTypeRef{
-		_CFTypeRef(kSecClass):            _CFTypeRef(kSecClassIdentity),
-		_CFTypeRef(kSecReturnRef):        _CFTypeRef(kCFBooleanTrue),
-		_CFTypeRef(kSecReturnAttributes): _CFTypeRef(kCFBooleanTrue),
-		_CFTypeRef(kSecMatchLimit):       _CFTypeRef(kSecMatchLimitAll),
+		_CFTypeRef(sec.Class):            _CFTypeRef(sec.ClassIdentity),
+		_CFTypeRef(sec.ReturnRef):        _CFTypeRef(cf.BooleanTrue),
+		_CFTypeRef(sec.ReturnAttributes): _CFTypeRef(cf.BooleanTrue),
+		_CFTypeRef(sec.MatchLimit):       _CFTypeRef(sec.MatchLimitAll),
 	}
 
 	if query.Label != "" {
-		labelRef := stringToCFString(query.Label)
-		defer _CFRelease(_CFTypeRef(labelRef))
-		queryMap[_CFTypeRef(kSecAttrLabel)] = _CFTypeRef(labelRef)
+		labelRef := cf.StringToCFString(query.Label)
+		defer cf.Release(_CFTypeRef(labelRef))
+		queryMap[_CFTypeRef(sec.AttrLabel)] = _CFTypeRef(labelRef)
 	}
 
 	// If querying only CTK, add token ID filter
 	if query.Type == IdentityQueryTypeCTK {
-		tokenIDRef := stringToCFString(CTKCardTokenID)
-		defer _CFRelease(_CFTypeRef(tokenIDRef))
-		queryMap[_CFTypeRef(kSecAttrTokenID)] = _CFTypeRef(tokenIDRef)
+		tokenIDRef := cf.StringToCFString(CTKCardTokenID)
+		defer cf.Release(_CFTypeRef(tokenIDRef))
+		queryMap[_CFTypeRef(sec.AttrTokenID)] = _CFTypeRef(tokenIDRef)
 	}
 
-	queryDict, err := mapToCFDictionary(queryMap)
+	queryDict, err := cf.MapToCFDictionary(queryMap)
 	if err != nil {
 		return nil, fmt.Errorf("creating query: %w", err)
 	}
-	defer _CFRelease(_CFTypeRef(queryDict))
+	defer cf.Release(_CFTypeRef(queryDict))
 
 	var res _CFTypeRef
-	osstatus := _SecItemCopyMatching(queryDict, &res)
-	if err := secOSStatusErr(osstatus); err != nil {
-		if err.code == errSecItemNotFound {
+	osstatus := sec.ItemCopyMatching(queryDict, &res)
+	if err := sec.OSStatusErr(osstatus); err != nil {
+		var secErr *ErrSecOSStatus
+		if errors.As(err, &secErr) && secErr.code == errSecItemNotFound {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("error copying item from query: %w", err)
 	}
-	defer _CFRelease(res)
+	defer cf.Release(res)
 
-	items := goSliceFromCFArray(_CFArrayRef(res))
+	items := cf.GoSliceFromCFArray(_CFArrayRef(res))
 
 	var ret []*Identity
 	for _, item := range items {
-		itemDict := mapFromCFDictionary(_CFDictionaryRef(item))
+		itemDict := _CFDictionaryRef(item)
 
 		// Extract label
-		var itemLabel string
-		if l, ok := getStringAttr(itemDict, kSecAttrLabel); ok {
-			itemLabel = l
-		}
+		itemLabel, _ := cf.GetDictionaryString(itemDict, sec.AttrLabel)
 
 		// Extract identity ref
-		refValue, ok := itemDict[_CFTypeRef(kSecValueRef)]
-		if !ok {
+		refValue := cf.GetDictionaryValue(itemDict, sec.ValueRef)
+		if refValue == 0 {
 			continue
 		}
 		ref := _SecIdentityRef(refValue)
-		_CFRetain(_CFTypeRef(ref))
+		cf.Retain(_CFTypeRef(ref))
 
 		// Determine identity type by checking token ID
-		tokenID, _ := getStringAttr(itemDict, kSecAttrTokenID)
+		tokenID, _ := cf.GetDictionaryString(itemDict, sec.AttrTokenID)
 		isCTK := tokenID == CTKCardTokenID
 
 		// Skip based on query type filter
 		if query.Type == IdentityQueryTypeSecIdentity && isCTK {
-			_CFRelease(_CFTypeRef(ref))
+			cf.Release(_CFTypeRef(ref))
 			continue
 		}
 		// Note: CTK filter is already handled in the query
@@ -314,7 +344,7 @@ func ListIdentities(query IdentityQuery) ([]*Identity, error) {
 		}
 
 		runtime.AddCleanup(identity, func(identityRef _SecIdentityRef) {
-			_CFRelease(_CFTypeRef(identityRef))
+			cf.Release(_CFTypeRef(identityRef))
 		}, ref)
 
 		if isCTK {
@@ -345,6 +375,17 @@ func (i *Identity) Certificate() (*x509.Certificate, error) {
 	}
 	i.certDone = true
 
+	cf, err := getCoreFoundation()
+	if err != nil {
+		i.certErr = err
+		return nil, i.certErr
+	}
+	sec, err := getSecurity()
+	if err != nil {
+		i.certErr = err
+		return nil, i.certErr
+	}
+
 	if i.identityRef == 0 {
 		i.certErr = fmt.Errorf("no identity ref")
 		return nil, i.certErr
@@ -352,22 +393,22 @@ func (i *Identity) Certificate() (*x509.Certificate, error) {
 
 	// Get the certificate from the identity
 	var certRef _SecCertificateRef
-	if err := secOSStatusErr(_SecIdentityCopyCertificate(i.identityRef, &certRef)); err != nil {
+	if err := sec.OSStatusErr(sec.IdentityCopyCertificate(i.identityRef, &certRef)); err != nil {
 		i.certErr = fmt.Errorf("copying certificate: %w", err)
 		return nil, i.certErr
 	}
-	defer _CFRelease(_CFTypeRef(certRef))
+	defer cf.Release(_CFTypeRef(certRef))
 
 	// Get DER data from certificate
-	derData := _SecCertificateCopyData(certRef)
+	derData := sec.CertificateCopyData(certRef)
 	if derData == 0 {
 		i.certErr = fmt.Errorf("getting certificate data")
 		return nil, i.certErr
 	}
-	defer _CFRelease(_CFTypeRef(derData))
+	defer cf.Release(_CFTypeRef(derData))
 
 	// Parse as X.509
-	cert, err := x509.ParseCertificate(bytesFromCFData(derData))
+	cert, err := x509.ParseCertificate(cf.BytesFromCFData(derData))
 	if err != nil {
 		i.certErr = fmt.Errorf("parsing certificate: %w", err)
 		return nil, i.certErr
@@ -409,6 +450,17 @@ func (i *Identity) ensureKeyFields() error {
 	}
 	i.keyFieldsExtracted = true
 
+	cf, err := getCoreFoundation()
+	if err != nil {
+		i.keyFieldsErr = err
+		return i.keyFieldsErr
+	}
+	sec, err := getSecurity()
+	if err != nil {
+		i.keyFieldsErr = err
+		return i.keyFieldsErr
+	}
+
 	if i.identityRef == 0 {
 		i.keyFieldsErr = fmt.Errorf("no identity ref")
 		return i.keyFieldsErr
@@ -416,32 +468,32 @@ func (i *Identity) ensureKeyFields() error {
 
 	// Get the private key from the identity
 	var keyRef _SecKeyRef
-	if err := secOSStatusErr(_SecIdentityCopyPrivateKey(i.identityRef, &keyRef)); err != nil {
+	if err := sec.OSStatusErr(sec.IdentityCopyPrivateKey(i.identityRef, &keyRef)); err != nil {
 		i.keyFieldsErr = fmt.Errorf("copying private key: %w", err)
 		return i.keyFieldsErr
 	}
-	defer _CFRelease(_CFTypeRef(keyRef))
+	defer cf.Release(_CFTypeRef(keyRef))
 
 	// Get key attributes
-	attrsRef := _SecKeyCopyAttributes(keyRef)
+	attrsRef := sec.KeyCopyAttributes(keyRef)
 	if attrsRef == 0 {
 		i.keyFieldsErr = fmt.Errorf("getting key attributes")
 		return i.keyFieldsErr
 	}
-	defer _CFRelease(_CFTypeRef(attrsRef))
+	defer cf.Release(_CFTypeRef(attrsRef))
 
 	// Extract PublicKeyHash (kSecAttrApplicationLabel)
-	if appLabelRef := _CFDictionaryGetValue(attrsRef, _CFTypeRef(kSecAttrApplicationLabel)); appLabelRef != 0 {
-		if _CFGetTypeID(appLabelRef) == _CFDataGetTypeID() {
-			i.publicKeyHash = bytesFromCFData(_CFDataRef(appLabelRef))
+	if appLabelRef := cf.GetDictionaryValue(attrsRef, sec.AttrApplicationLabel); appLabelRef != 0 {
+		if cf.GetTypeID(appLabelRef) == cf.DataGetTypeID() {
+			i.publicKeyHash = cf.BytesFromCFData(_CFDataRef(appLabelRef))
 		}
 	}
 
 	// Extract KeySizeInBits
-	if keySizeRef := _CFDictionaryGetValue(attrsRef, _CFTypeRef(kSecAttrKeySizeInBits)); keySizeRef != 0 {
-		if _CFGetTypeID(keySizeRef) == _CFNumberGetTypeID() {
+	if keySizeRef := cf.GetDictionaryValue(attrsRef, sec.AttrKeySizeInBits); keySizeRef != 0 {
+		if cf.GetTypeID(keySizeRef) == cf.NumberGetTypeID() {
 			var keySize int32
-			if _CFNumberGetValue(_CFNumberRef(keySizeRef), kCFNumberIntType, unsafe.Pointer(&keySize)) {
+			if cf.NumberGetValue(_CFNumberRef(keySizeRef), cf.NumberIntType, unsafe.Pointer(&keySize)) {
 				i.keySizeInBits = int(keySize)
 			}
 		}

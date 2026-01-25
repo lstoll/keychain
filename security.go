@@ -4,6 +4,7 @@ package keychain
 
 import (
 	"fmt"
+	"sync"
 
 	"github.com/ebitengine/purego"
 )
@@ -28,61 +29,282 @@ const (
 	kSecCSDefaultFlags = 0
 )
 
+type securityFramework struct {
+	ClassIdentity                    _CFStringRef
+	ClassGenericPassword             _CFStringRef
+	MatchLimitAll                    _CFStringRef
+	MatchLimitOne                    _CFStringRef
+	Class                            _CFStringRef
+	ReturnRef                        _CFStringRef
+	ReturnAttributes                 _CFStringRef
+	ReturnData                       _CFStringRef
+	MatchLimit                       _CFStringRef
+	AttrAccount                      _CFStringRef
+	AttrService                      _CFStringRef
+	AttrLabel                        _CFStringRef
+	AttrGeneric                      _CFStringRef
+	ValueData                        _CFStringRef
+	AttrTokenID                      _CFStringRef
+	AttrApplicationLabel             _CFStringRef
+	AttrKeySizeInBits                _CFStringRef
+	ValueRef                         _CFStringRef
+	CodeInfoCdHashes                 _CFStringRef
+	CodeInfoDigestAlgorithms         _CFStringRef
+	CodeSignatureHashSHA1            int32
+	CodeSignatureHashSHA256          int32
+	CodeSignatureHashSHA256Truncated int32
+	CodeSignatureHashSHA384          int32
+	CodeSignatureHashSHA512          int32
+
+	KeyAlgorithmECDSASignatureDigestX962SHA256 _SecKeyAlgorithm
+	KeyAlgorithmECDSASignatureDigestX962SHA384 _SecKeyAlgorithm
+	KeyAlgorithmECDSASignatureDigestX962SHA512 _SecKeyAlgorithm
+
+	ItemCopyMatching              func(query _CFDictionaryRef, res *_CFTypeRef) _OSStatus
+	ItemAdd                       func(attributes _CFDictionaryRef, result *_CFTypeRef) _OSStatus
+	ItemDelete                    func(query _CFDictionaryRef) _OSStatus
+	CopyErrorMessageString        func(s _OSStatus, reserved uintptr) _CFStringRef
+	CodeCopySelf                  func(flags uint32, code *_SecCodeRef) _OSStatus
+	CodeCheckValidity             func(code _SecCodeRef, flags uint32, requirement _CFTypeRef) _OSStatus
+	CodeCopySigningInformation    func(code _SecStaticCodeRef, flags uint32, information *_CFDictionaryRef) _OSStatus
+	KeyCopyAttributes             func(key _SecKeyRef) _CFDictionaryRef
+	KeyCopyPublicKey              func(key _SecKeyRef) _SecKeyRef
+	KeyCopyExternalRepresentation func(key _SecKeyRef, error *_CFErrorRef) _CFDataRef
+	KeyCreateSignature            func(key _SecKeyRef, algorithm _SecKeyAlgorithm, signedData _CFDataRef, error *_CFErrorRef) _CFDataRef
+	IdentityCopyPrivateKey        func(identity _SecIdentityRef, privateKey *_SecKeyRef) _OSStatus
+	IdentityCopyCertificate       func(identity _SecIdentityRef, certificate *_SecCertificateRef) _OSStatus
+	CertificateCopyData           func(certificate _SecCertificateRef) _CFDataRef
+}
+
 var (
-	security = dlopen("/System/Library/Frameworks/Security.framework/Security", purego.RTLD_LAZY|purego.RTLD_GLOBAL)
-
-	kSecClassIdentity                    _CFStringRef = _CFStringRef(constsym(security, "kSecClassIdentity"))
-	kSecClassGenericPassword             _CFStringRef = _CFStringRef(constsym(security, "kSecClassGenericPassword"))
-	kSecMatchLimitAll                    _CFStringRef = _CFStringRef(constsym(security, "kSecMatchLimitAll"))
-	kSecMatchLimitOne                    _CFStringRef = _CFStringRef(constsym(security, "kSecMatchLimitOne"))
-	kSecClass                            _CFStringRef = _CFStringRef(constsym(security, "kSecClass"))
-	kSecReturnRef                        _CFStringRef = _CFStringRef(constsym(security, "kSecReturnRef"))
-	kSecReturnAttributes                 _CFStringRef = _CFStringRef(constsym(security, "kSecReturnAttributes"))
-	kSecReturnData                       _CFStringRef = _CFStringRef(constsym(security, "kSecReturnData"))
-	kSecMatchLimit                       _CFStringRef = _CFStringRef(constsym(security, "kSecMatchLimit"))
-	kSecAttrAccount                      _CFStringRef = _CFStringRef(constsym(security, "kSecAttrAccount"))
-	kSecAttrService                      _CFStringRef = _CFStringRef(constsym(security, "kSecAttrService"))
-	kSecAttrLabel                        _CFStringRef = _CFStringRef(constsym(security, "kSecAttrLabel"))
-	kSecAttrGeneric                      _CFStringRef = _CFStringRef(constsym(security, "kSecAttrGeneric"))
-	kSecValueData                        _CFStringRef = _CFStringRef(constsym(security, "kSecValueData"))
-	kSecAttrTokenID                      _CFStringRef = _CFStringRef(constsym(security, "kSecAttrTokenID"))
-	kSecAttrApplicationLabel             _CFStringRef = _CFStringRef(constsym(security, "kSecAttrApplicationLabel"))
-	kSecAttrKeySizeInBits                _CFStringRef = _CFStringRef(constsym(security, "kSecAttrKeySizeInBits"))
-	kSecValueRef                         _CFStringRef = _CFStringRef(constsym(security, "kSecValueRef"))
-	kSecCodeInfoCdHashes                 _CFStringRef = _CFStringRef(constsym(security, "kSecCodeInfoCdHashes"))
-	kSecCodeInfoDigestAlgorithms         _CFStringRef = _CFStringRef(constsym(security, "kSecCodeInfoDigestAlgorithms"))
-	kSecCodeSignatureHashSHA1            int32        = 1
-	kSecCodeSignatureHashSHA256          int32        = 2
-	kSecCodeSignatureHashSHA256Truncated int32        = 3
-	kSecCodeSignatureHashSHA384          int32        = 4
-	kSecCodeSignatureHashSHA512          int32        = 5
-
-	kSecKeyAlgorithmECDSASignatureDigestX962SHA256 _SecKeyAlgorithm = _SecKeyAlgorithm(constsym(security, "kSecKeyAlgorithmECDSASignatureDigestX962SHA256"))
-	kSecKeyAlgorithmECDSASignatureDigestX962SHA384 _SecKeyAlgorithm = _SecKeyAlgorithm(constsym(security, "kSecKeyAlgorithmECDSASignatureDigestX962SHA384"))
-	kSecKeyAlgorithmECDSASignatureDigestX962SHA512 _SecKeyAlgorithm = _SecKeyAlgorithm(constsym(security, "kSecKeyAlgorithmECDSASignatureDigestX962SHA512"))
+	_sec     *securityFramework
+	_secOnce sync.Once
 )
 
-var (
-	_SecItemCopyMatching       = registerFunc[func(query _CFDictionaryRef, res *_CFTypeRef) _OSStatus](security, "SecItemCopyMatching")
-	_SecItemAdd                = registerFunc[func(attributes _CFDictionaryRef, result *_CFTypeRef) _OSStatus](security, "SecItemAdd")
-	_SecItemDelete             = registerFunc[func(query _CFDictionaryRef) _OSStatus](security, "SecItemDelete")
-	_SecCopyErrorMessageString = registerFunc[func(s _OSStatus, reserved uintptr) _CFStringRef](security, "SecCopyErrorMessageString")
+func getSecurity() (*securityFramework, error) {
+	var _secErr error
 
-	_SecCodeCopySelf               = registerFunc[func(flags uint32, code *_SecCodeRef) _OSStatus](security, "SecCodeCopySelf")
-	_SecCodeCheckValidity          = registerFunc[func(code _SecCodeRef, flags uint32, requirement _CFTypeRef) _OSStatus](security, "SecCodeCheckValidity")
-	_SecCodeCopySigningInformation = registerFunc[func(code _SecStaticCodeRef, flags uint32, information *_CFDictionaryRef) _OSStatus](security, "SecCodeCopySigningInformation")
+	_secOnce.Do(func() {
+		handle, err := dlopen("/System/Library/Frameworks/Security.framework/Security", purego.RTLD_LAZY|purego.RTLD_GLOBAL)
+		if err != nil {
+			_secErr = err
+			return
+		}
 
-	_SecKeyCopyAttributes             = registerFunc[func(key _SecKeyRef) _CFDictionaryRef](security, "SecKeyCopyAttributes")
-	_SecKeyCopyPublicKey              = registerFunc[func(key _SecKeyRef) _SecKeyRef](security, "SecKeyCopyPublicKey")
-	_SecKeyCopyExternalRepresentation = registerFunc[func(key _SecKeyRef, error *_CFErrorRef) _CFDataRef](security, "SecKeyCopyExternalRepresentation")
-	_SecKeyCreateSignature            = registerFunc[func(key _SecKeyRef, algorithm _SecKeyAlgorithm, signedData _CFDataRef, error *_CFErrorRef) _CFDataRef](security, "SecKeyCreateSignature")
+		s := &securityFramework{}
 
-	_SecIdentityCopyPrivateKey  = registerFunc[func(identity _SecIdentityRef, privateKey *_SecKeyRef) _OSStatus](security, "SecIdentityCopyPrivateKey")
-	_SecIdentityCopyCertificate = registerFunc[func(identity _SecIdentityRef, certificate *_SecCertificateRef) _OSStatus](security, "SecIdentityCopyCertificate")
-	_SecCertificateCopyData     = registerFunc[func(certificate _SecCertificateRef) _CFDataRef](security, "SecCertificateCopyData")
-)
+		// Constants
+		var val uintptr
+		if val, err = constsym(handle, "kSecClassIdentity"); err == nil {
+			s.ClassIdentity = _CFStringRef(val)
+		} else {
+			_secErr = err
+			return
+		}
+		if val, err = constsym(handle, "kSecClassGenericPassword"); err == nil {
+			s.ClassGenericPassword = _CFStringRef(val)
+		} else {
+			_secErr = err
+			return
+		}
+		if val, err = constsym(handle, "kSecMatchLimitAll"); err == nil {
+			s.MatchLimitAll = _CFStringRef(val)
+		} else {
+			_secErr = err
+			return
+		}
+		if val, err = constsym(handle, "kSecMatchLimitOne"); err == nil {
+			s.MatchLimitOne = _CFStringRef(val)
+		} else {
+			_secErr = err
+			return
+		}
+		if val, err = constsym(handle, "kSecClass"); err == nil {
+			s.Class = _CFStringRef(val)
+		} else {
+			_secErr = err
+			return
+		}
+		if val, err = constsym(handle, "kSecReturnRef"); err == nil {
+			s.ReturnRef = _CFStringRef(val)
+		} else {
+			_secErr = err
+			return
+		}
+		if val, err = constsym(handle, "kSecReturnAttributes"); err == nil {
+			s.ReturnAttributes = _CFStringRef(val)
+		} else {
+			_secErr = err
+			return
+		}
+		if val, err = constsym(handle, "kSecReturnData"); err == nil {
+			s.ReturnData = _CFStringRef(val)
+		} else {
+			_secErr = err
+			return
+		}
+		if val, err = constsym(handle, "kSecMatchLimit"); err == nil {
+			s.MatchLimit = _CFStringRef(val)
+		} else {
+			_secErr = err
+			return
+		}
+		if val, err = constsym(handle, "kSecAttrAccount"); err == nil {
+			s.AttrAccount = _CFStringRef(val)
+		} else {
+			_secErr = err
+			return
+		}
+		if val, err = constsym(handle, "kSecAttrService"); err == nil {
+			s.AttrService = _CFStringRef(val)
+		} else {
+			_secErr = err
+			return
+		}
+		if val, err = constsym(handle, "kSecAttrLabel"); err == nil {
+			s.AttrLabel = _CFStringRef(val)
+		} else {
+			_secErr = err
+			return
+		}
+		if val, err = constsym(handle, "kSecAttrGeneric"); err == nil {
+			s.AttrGeneric = _CFStringRef(val)
+		} else {
+			_secErr = err
+			return
+		}
+		if val, err = constsym(handle, "kSecValueData"); err == nil {
+			s.ValueData = _CFStringRef(val)
+		} else {
+			_secErr = err
+			return
+		}
+		if val, err = constsym(handle, "kSecAttrTokenID"); err == nil {
+			s.AttrTokenID = _CFStringRef(val)
+		} else {
+			_secErr = err
+			return
+		}
+		if val, err = constsym(handle, "kSecAttrApplicationLabel"); err == nil {
+			s.AttrApplicationLabel = _CFStringRef(val)
+		} else {
+			_secErr = err
+			return
+		}
+		if val, err = constsym(handle, "kSecAttrKeySizeInBits"); err == nil {
+			s.AttrKeySizeInBits = _CFStringRef(val)
+		} else {
+			_secErr = err
+			return
+		}
+		if val, err = constsym(handle, "kSecValueRef"); err == nil {
+			s.ValueRef = _CFStringRef(val)
+		} else {
+			_secErr = err
+			return
+		}
+		if val, err = constsym(handle, "kSecCodeInfoCdHashes"); err == nil {
+			s.CodeInfoCdHashes = _CFStringRef(val)
+		} else {
+			_secErr = err
+			return
+		}
+		if val, err = constsym(handle, "kSecCodeInfoDigestAlgorithms"); err == nil {
+			s.CodeInfoDigestAlgorithms = _CFStringRef(val)
+		} else {
+			_secErr = err
+			return
+		}
 
-// ErrorCode for compatibility with o2ext
+		s.CodeSignatureHashSHA1 = 1
+		s.CodeSignatureHashSHA256 = 2
+		s.CodeSignatureHashSHA256Truncated = 3
+		s.CodeSignatureHashSHA384 = 4
+		s.CodeSignatureHashSHA512 = 5
+
+		if val, err = constsym(handle, "kSecKeyAlgorithmECDSASignatureDigestX962SHA256"); err == nil {
+			s.KeyAlgorithmECDSASignatureDigestX962SHA256 = _SecKeyAlgorithm(val)
+		} else {
+			_secErr = err
+			return
+		}
+		if val, err = constsym(handle, "kSecKeyAlgorithmECDSASignatureDigestX962SHA384"); err == nil {
+			s.KeyAlgorithmECDSASignatureDigestX962SHA384 = _SecKeyAlgorithm(val)
+		} else {
+			_secErr = err
+			return
+		}
+		if val, err = constsym(handle, "kSecKeyAlgorithmECDSASignatureDigestX962SHA512"); err == nil {
+			s.KeyAlgorithmECDSASignatureDigestX962SHA512 = _SecKeyAlgorithm(val)
+		} else {
+			_secErr = err
+			return
+		}
+
+		// Functions
+		if s.ItemCopyMatching, err = registerFunc[func(query _CFDictionaryRef, res *_CFTypeRef) _OSStatus](handle, "SecItemCopyMatching"); err != nil {
+			_secErr = err
+			return
+		}
+		if s.ItemAdd, err = registerFunc[func(attributes _CFDictionaryRef, result *_CFTypeRef) _OSStatus](handle, "SecItemAdd"); err != nil {
+			_secErr = err
+			return
+		}
+		if s.ItemDelete, err = registerFunc[func(query _CFDictionaryRef) _OSStatus](handle, "SecItemDelete"); err != nil {
+			_secErr = err
+			return
+		}
+		if s.CopyErrorMessageString, err = registerFunc[func(s _OSStatus, reserved uintptr) _CFStringRef](handle, "SecCopyErrorMessageString"); err != nil {
+			_secErr = err
+			return
+		}
+		if s.CodeCopySelf, err = registerFunc[func(flags uint32, code *_SecCodeRef) _OSStatus](handle, "SecCodeCopySelf"); err != nil {
+			_secErr = err
+			return
+		}
+		if s.CodeCheckValidity, err = registerFunc[func(code _SecCodeRef, flags uint32, requirement _CFTypeRef) _OSStatus](handle, "SecCodeCheckValidity"); err != nil {
+			_secErr = err
+			return
+		}
+		if s.CodeCopySigningInformation, err = registerFunc[func(code _SecStaticCodeRef, flags uint32, information *_CFDictionaryRef) _OSStatus](handle, "SecCodeCopySigningInformation"); err != nil {
+			_secErr = err
+			return
+		}
+		if s.KeyCopyAttributes, err = registerFunc[func(key _SecKeyRef) _CFDictionaryRef](handle, "SecKeyCopyAttributes"); err != nil {
+			_secErr = err
+			return
+		}
+		if s.KeyCopyPublicKey, err = registerFunc[func(key _SecKeyRef) _SecKeyRef](handle, "SecKeyCopyPublicKey"); err != nil {
+			_secErr = err
+			return
+		}
+		if s.KeyCopyExternalRepresentation, err = registerFunc[func(key _SecKeyRef, error *_CFErrorRef) _CFDataRef](handle, "SecKeyCopyExternalRepresentation"); err != nil {
+			_secErr = err
+			return
+		}
+		if s.KeyCreateSignature, err = registerFunc[func(key _SecKeyRef, algorithm _SecKeyAlgorithm, signedData _CFDataRef, error *_CFErrorRef) _CFDataRef](handle, "SecKeyCreateSignature"); err != nil {
+			_secErr = err
+			return
+		}
+		if s.IdentityCopyPrivateKey, err = registerFunc[func(identity _SecIdentityRef, privateKey *_SecKeyRef) _OSStatus](handle, "SecIdentityCopyPrivateKey"); err != nil {
+			_secErr = err
+			return
+		}
+		if s.IdentityCopyCertificate, err = registerFunc[func(identity _SecIdentityRef, certificate *_SecCertificateRef) _OSStatus](handle, "SecIdentityCopyCertificate"); err != nil {
+			_secErr = err
+			return
+		}
+		if s.CertificateCopyData, err = registerFunc[func(certificate _SecCertificateRef) _CFDataRef](handle, "SecCertificateCopyData"); err != nil {
+			_secErr = err
+			return
+		}
+
+		_sec = s
+	})
+
+	return _sec, _secErr
+}
+
 type ErrSecOSStatusCode _OSStatus
 
 const (
@@ -104,12 +326,23 @@ func (e *ErrSecOSStatus) Code() ErrSecOSStatusCode {
 	return ErrSecOSStatusCode(e.code)
 }
 
-func secOSStatusErr(s _OSStatus) *ErrSecOSStatus {
-	if s == errSecSuccess {
+func (s *securityFramework) OSStatusErr(code _OSStatus) error {
+	if code == errSecSuccess {
 		return nil
 	}
+	cf, err := getCoreFoundation()
+	if err != nil {
+		// If we can't load CoreFoundation, we can't convert the error string.
+		// Return a bare error.
+		return &ErrSecOSStatus{code: code, message: "unknown (corefoundation load failed)"}
+	}
+
+	msgRef := s.CopyErrorMessageString(code, 0)
+	msg := cf.CFStringToString(msgRef)
+	cf.Release(_CFTypeRef(msgRef))
+
 	return &ErrSecOSStatus{
-		code:    s,
-		message: cfStringtoString(_SecCopyErrorMessageString(s, 0)),
+		code:    code,
+		message: msg,
 	}
 }

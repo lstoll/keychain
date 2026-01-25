@@ -17,5 +17,13 @@ func TestDoubleDeref(t *testing.T) {
 }*/
 
 func TestConstDeref(t *testing.T) {
-	t.Log(cfStringtoString(kSecMatchLimit))
+	cf, err := getCoreFoundation()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sec, err := getSecurity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Log(cf.CFStringToString(sec.MatchLimit))
 }
