@@ -1,4 +1,4 @@
-module github.com/lstoll/keychain
+module lds.li/keychain
 
 go 1.25
 

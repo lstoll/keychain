@@ -1,5 +1,5 @@
 # keychain
-[![Go Reference](https://pkg.go.dev/badge/github.com/lstoll/keychain.svg)](https://pkg.go.dev/github.com/lstoll/keychain)
+[![Go Reference](https://pkg.go.dev/badge/lds.li/keychain.svg)](https://pkg.go.dev/lds.li/keychain)
 
 Status: early development
 
