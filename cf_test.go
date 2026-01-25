@@ -14,8 +14,8 @@ func TestCFDict(t *testing.T) {
 	v1 := stringToCFString("xxxx")
 	v2 := stringToCFString("yyyy")
 
-	keys := []unsafe.Pointer{unsafe.Pointer(k1), unsafe.Pointer(k2)}
-	values := []unsafe.Pointer{unsafe.Pointer(v1), unsafe.Pointer(v2)}
+	keys := []unsafe.Pointer{unsafe.Pointer(k1), unsafe.Pointer(k2)}   //nolint:govet
+	values := []unsafe.Pointer{unsafe.Pointer(v1), unsafe.Pointer(v2)} //nolint:govet
 
 	res := _CFDictionaryCreate(kCFAllocatorDefault, &keys[0], &values[0], _CFIndex(2),
 		*(**_CFDictionaryKeyCallBacks)(unsafe.Pointer(&kCFTypeDictionaryKeyCallBacks)),
