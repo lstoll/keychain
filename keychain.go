@@ -55,7 +55,7 @@ func (s *SecIdentity) Signer() (crypto.Signer, error) {
 	// Or check key attributes.
 	attrs := extractAttributesFromKeyRef(s.keyRef)
 	keySize, _ := getIntAttr(attrs, kSecAttrKeySizeInBits)
-	
+
 	var curve elliptic.Curve
 	switch keySize {
 	case 256:
@@ -75,7 +75,7 @@ func (s *SecIdentity) Signer() (crypto.Signer, error) {
 	if err != nil {
 		return nil, fmt.Errorf("parsing public key: %w", err)
 	}
-	
+
 	return &secKeyPrivateKey{
 		keyRef: s.keyRef,
 		pub:    pubKey,
@@ -101,14 +101,14 @@ func (s *SecIdentity) Delete() error {
 	// To delete an identity, we pass the ref to SecItemDelete?
 	// Or we create a query with the ref.
 	query, err := mapToCFDictionary(map[_CFTypeRef]_CFTypeRef{
-		_CFTypeRef(kSecClass):      _CFTypeRef(kSecClassIdentity),
-		_CFTypeRef(kSecValueRef):   _CFTypeRef(s.ref),
+		_CFTypeRef(kSecClass):    _CFTypeRef(kSecClassIdentity),
+		_CFTypeRef(kSecValueRef): _CFTypeRef(s.ref),
 	})
 	if err != nil {
 		return err
 	}
 	defer _CFRelease(_CFTypeRef(query))
-	
+
 	return secOSStatusErr(_SecItemDelete(query))
 }
 
@@ -132,7 +132,7 @@ func Identities() ([]Identity, error) {
 	var res _CFTypeRef
 	osstatus := _SecItemCopyMatching(query, &res)
 	if err := secOSStatusErr(osstatus); err != nil {
-		if err.Code == errSecItemNotFound {
+		if err.code == errSecItemNotFound {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("error copying item from query: %w", err)
@@ -156,7 +156,7 @@ func Identities() ([]Identity, error) {
 		// Original code: `defer _CFRelease(res)` then `ret = append(..., &Identity{ref: ...})`.
 		// This was a BUG in the original code if `Identity` struct lived longer than the function!
 		// Let's fix it by Retaining.
-		
+
 		ref := _SecIdentityRef(i)
 		_CFRetain(_CFTypeRef(ref))
 

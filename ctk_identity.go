@@ -333,7 +333,7 @@ func ListCTKIdentities() ([]Identity, error) {
 	status := _SecItemCopyMatching(q, &r)
 	if err := secOSStatusErr(status); err != nil {
 		// No items found is not an error for listing
-		if err.Code == errSecItemNotFound {
+		if err.code == errSecItemNotFound {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("listing CTK identities: %w", err)
