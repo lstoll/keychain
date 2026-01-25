@@ -80,30 +80,34 @@ var (
 	_SecIdentityCopyPrivateKey = registerFunc[func(identity _SecIdentityRef, privateKey *_SecKeyRef) _OSStatus](security, "SecIdentityCopyPrivateKey")
 )
 
-type errSecOSStatus struct {
-	Code    _OSStatus
-	Message string
+// ErrorCode for compatibility with o2ext
+type ErrSecOSStatusCode _OSStatus
+
+const (
+	ErrSecOSStatusCodeSuccess       ErrSecOSStatusCode = ErrSecOSStatusCode(errSecSuccess)
+	ErrSecOSStatusCodeItemNotFound  ErrSecOSStatusCode = ErrSecOSStatusCode(errSecItemNotFound)
+	ErrSecOSStatusCodeDuplicateItem ErrSecOSStatusCode = ErrSecOSStatusCode(errSecDuplicateItem)
+)
+
+type ErrSecOSStatus struct {
+	code    _OSStatus
+	message string
 }
 
-func (e *errSecOSStatus) Error() string {
-	return fmt.Sprintf("OSStatus error code %d: %s", e.Code, e.Message)
+func (e *ErrSecOSStatus) Error() string {
+	return fmt.Sprintf("OSStatus error code %d: %s", e.code, e.message)
 }
 
-func secOSStatusErr(s _OSStatus) *errSecOSStatus {
+func (e *ErrSecOSStatus) Code() ErrSecOSStatusCode {
+	return ErrSecOSStatusCode(e.code)
+}
+
+func secOSStatusErr(s _OSStatus) *ErrSecOSStatus {
 	if s == errSecSuccess {
 		return nil
 	}
-	return &errSecOSStatus{
-		Code:    s,
-		Message: cfStringtoString(_SecCopyErrorMessageString(s, 0)),
+	return &ErrSecOSStatus{
+		code:    s,
+		message: cfStringtoString(_SecCopyErrorMessageString(s, 0)),
 	}
 }
-
-// ErrorCode for compatibility with o2ext
-type ErrorCode _OSStatus
-
-const (
-	KeychainErrorCodeSuccess       ErrorCode = ErrorCode(errSecSuccess)
-	KeychainErrorCodeItemNotFound  ErrorCode = ErrorCode(errSecItemNotFound)
-	KeychainErrorCodeDuplicateItem ErrorCode = ErrorCode(errSecDuplicateItem)
-)
