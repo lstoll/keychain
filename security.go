@@ -9,12 +9,13 @@ import (
 )
 
 type (
-	_SecIdentityRef   uintptr
-	_OSStatus         int32
-	_SecKeyRef        uintptr
-	_SecCodeRef       uintptr
-	_SecStaticCodeRef uintptr
-	_SecKeyAlgorithm  _CFStringRef
+	_SecIdentityRef    uintptr
+	_SecCertificateRef uintptr
+	_OSStatus          int32
+	_SecKeyRef         uintptr
+	_SecCodeRef        uintptr
+	_SecStaticCodeRef  uintptr
+	_SecKeyAlgorithm   _CFStringRef
 )
 
 const ( // https://gist.github.com/lefloh/3b4200a8eca40eb3c5596e6b6a7d83e5
@@ -32,7 +33,6 @@ var (
 
 	kSecClassIdentity                    _CFStringRef = _CFStringRef(constsym(security, "kSecClassIdentity"))
 	kSecClassGenericPassword             _CFStringRef = _CFStringRef(constsym(security, "kSecClassGenericPassword"))
-	kSecClassKey                         _CFStringRef = _CFStringRef(constsym(security, "kSecClassKey"))
 	kSecMatchLimitAll                    _CFStringRef = _CFStringRef(constsym(security, "kSecMatchLimitAll"))
 	kSecMatchLimitOne                    _CFStringRef = _CFStringRef(constsym(security, "kSecMatchLimitOne"))
 	kSecClass                            _CFStringRef = _CFStringRef(constsym(security, "kSecClass"))
@@ -77,7 +77,9 @@ var (
 	_SecKeyCopyExternalRepresentation = registerFunc[func(key _SecKeyRef, error *_CFErrorRef) _CFDataRef](security, "SecKeyCopyExternalRepresentation")
 	_SecKeyCreateSignature            = registerFunc[func(key _SecKeyRef, algorithm _SecKeyAlgorithm, signedData _CFDataRef, error *_CFErrorRef) _CFDataRef](security, "SecKeyCreateSignature")
 
-	_SecIdentityCopyPrivateKey = registerFunc[func(identity _SecIdentityRef, privateKey *_SecKeyRef) _OSStatus](security, "SecIdentityCopyPrivateKey")
+	_SecIdentityCopyPrivateKey  = registerFunc[func(identity _SecIdentityRef, privateKey *_SecKeyRef) _OSStatus](security, "SecIdentityCopyPrivateKey")
+	_SecIdentityCopyCertificate = registerFunc[func(identity _SecIdentityRef, certificate *_SecCertificateRef) _OSStatus](security, "SecIdentityCopyCertificate")
+	_SecCertificateCopyData     = registerFunc[func(certificate _SecCertificateRef) _CFDataRef](security, "SecCertificateCopyData")
 )
 
 // ErrorCode for compatibility with o2ext

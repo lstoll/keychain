@@ -59,6 +59,7 @@ var (
 	_CFDataGetBytes               = registerFunc[func(theData _CFDataRef, range_ _CFRange, buffer *byte)](corefoundation, "CFDataGetBytes")
 	_CFDictionaryGetCount         = registerFunc[func(theDict _CFDictionaryRef) _CFIndex](corefoundation, "CFDictionaryGetCount")
 	_CFDictionaryGetKeysAndValues = registerFunc[func(theDict _CFDictionaryRef, keys *unsafe.Pointer, values *unsafe.Pointer)](corefoundation, "CFDictionaryGetKeysAndValues")
+	_CFDictionaryGetValue         = registerFunc[func(theDict _CFDictionaryRef, key _CFTypeRef) _CFTypeRef](corefoundation, "CFDictionaryGetValue")
 	_CFGetTypeID                  = registerFunc[func(cf _CFTypeRef) _CFTypeID](corefoundation, "CFGetTypeID")
 	_CFStringGetTypeID            = registerFunc[func() _CFTypeID](corefoundation, "CFStringGetTypeID")
 	_CFDataGetTypeID              = registerFunc[func() _CFTypeID](corefoundation, "CFDataGetTypeID")
@@ -170,7 +171,7 @@ func cfDictLookup(attrs map[_CFTypeRef]_CFTypeRef, key _CFStringRef) (_CFTypeRef
 }
 
 func getStringAttr(attrs map[_CFTypeRef]_CFTypeRef, key _CFStringRef) (string, bool) {
-	if val, ok := cfDictLookup(attrs, key); ok {
+	if val, ok := cfDictLookup(attrs, key); ok && val != 0 {
 		if _CFGetTypeID(val) == _CFStringGetTypeID() {
 			return cfStringtoString(_CFStringRef(val)), true
 		}
@@ -179,7 +180,7 @@ func getStringAttr(attrs map[_CFTypeRef]_CFTypeRef, key _CFStringRef) (string, b
 }
 
 func getDataAttr(attrs map[_CFTypeRef]_CFTypeRef, key _CFStringRef) ([]byte, bool) {
-	if val, ok := cfDictLookup(attrs, key); ok {
+	if val, ok := cfDictLookup(attrs, key); ok && val != 0 {
 		if _CFGetTypeID(val) == _CFDataGetTypeID() {
 			return bytesFromCFData(_CFDataRef(val)), true
 		}
@@ -187,8 +188,8 @@ func getDataAttr(attrs map[_CFTypeRef]_CFTypeRef, key _CFStringRef) ([]byte, boo
 	return nil, false
 }
 
-func getIntAttr(attrs map[_CFTypeRef]_CFTypeRef, key _CFStringRef) (int, bool) {
-	if val, ok := cfDictLookup(attrs, key); ok {
+func getIntAttr(attrs map[_CFTypeRef]_CFTypeRef, key _CFStringRef) (int, bool) { //nolint:unused
+	if val, ok := cfDictLookup(attrs, key); ok && val != 0 {
 		if _CFGetTypeID(val) == _CFNumberGetTypeID() {
 			var num int32
 			if _CFNumberGetValue(_CFNumberRef(val), kCFNumberIntType, unsafe.Pointer(&num)) {

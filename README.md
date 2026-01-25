@@ -1,6 +1,6 @@
 # keychain
-[![Go Reference](https://pkg.go.dev/badge/lds.li/keychain.svg)](https://pkg.go.dev/lds.li/keychain)
+[![Go Reference](https://pkg.go.dev/badge/lds.li/keychain.svg)](https://pkg.go.dev/lds.li/keychain?GOOS=darwin)
 
 Status: early development
 
-Module to provide "pure go" access to the macOS Keychain, using [purego])https://github.com/ebitengine/purego). Rather than requiring cgo, this loads and calls the Frameworks at runtime. This allows easy cross-compilation without a macOS SDK and compiler, which is useful for simple builds for tools in Linux-based CI.
+Module to provide "pure go" access to the macOS Keychain, using [purego](https://github.com/ebitengine/purego). Rather than requiring cgo, this loads and calls the Frameworks at runtime. This allows easy cross-compilation without a macOS SDK and compiler, which is useful for simple builds for tools in Linux-based CI.

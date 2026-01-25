@@ -49,6 +49,6 @@ func tPtr[T any](v uintptr) *T {
 	return *(**T)(unsafe.Pointer(&v))
 }
 
-func ptrToPtr[T any](v *T) *unsafe.Pointer {
+func ptrToPtr[T any](v *T) *unsafe.Pointer { //nolint:unused
 	return (*unsafe.Pointer)(unsafe.Pointer(v))
 }
