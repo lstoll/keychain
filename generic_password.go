@@ -107,7 +107,7 @@ func CreateGenericPassword(args GenericPassword) error {
 	defer cf.Release(_CFTypeRef(attrs))
 
 	status := sec.ItemAdd(attrs, nil)
-	if err := sec.OSStatusErr(status); err != nil {
+	if err := sec.newError(status); err != nil {
 		return fmt.Errorf("creating generic password: %w", err)
 	}
 
@@ -168,7 +168,7 @@ func GetGenericPasswordAttributes(query GenericPasswordQuery) (GenericPassword, 
 
 	var r _CFTypeRef
 	status := sec.ItemCopyMatching(q, &r)
-	if err := sec.OSStatusErr(status); err != nil {
+	if err := sec.newError(status); err != nil {
 		return GenericPassword{}, fmt.Errorf("getting generic password attributes: %w", err)
 	}
 	defer cf.Release(_CFTypeRef(r))
@@ -197,7 +197,7 @@ func GetGenericPassword(query GenericPasswordQuery) ([]byte, error) {
 
 	var r _CFTypeRef
 	status := sec.ItemCopyMatching(q, &r)
-	if err := sec.OSStatusErr(status); err != nil {
+	if err := sec.newError(status); err != nil {
 		return nil, fmt.Errorf("getting generic password attributes: %w", err)
 	}
 	defer cf.Release(_CFTypeRef(r))
@@ -226,7 +226,7 @@ func ListGenericPasswords(query GenericPasswordQuery) ([]GenericPassword, error)
 
 	var r _CFTypeRef
 	status := sec.ItemCopyMatching(q, &r)
-	if err := sec.OSStatusErr(status); err != nil {
+	if err := sec.newError(status); err != nil {
 		return nil, fmt.Errorf("listing generic passwords: %w", err)
 	}
 	defer cf.Release(_CFTypeRef(r))
@@ -270,7 +270,7 @@ func DeleteGenericPassword(query GenericPasswordQuery) error {
 	defer cf.Release(_CFTypeRef(q))
 
 	status := sec.ItemDelete(q)
-	if err := sec.OSStatusErr(status); err != nil {
+	if err := sec.newError(status); err != nil {
 		return fmt.Errorf("deleting generic password: %w", err)
 	}
 

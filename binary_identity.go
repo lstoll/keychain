@@ -91,7 +91,7 @@ func getSelfCDHashes() (map[CodeSignatureHash]string, error) {
 	// Get a reference to the static code of the currently running process.
 	var myselfCode _SecCodeRef
 	status := sec.CodeCopySelf(kSecCSDefaultFlags, &myselfCode)
-	if err := sec.OSStatusErr(status); err != nil {
+	if err := sec.newError(status); err != nil {
 		return nil, fmt.Errorf("failed to get SecCodeRef for self: %w", err)
 	}
 	defer cf.Release(_CFTypeRef(myselfCode))
@@ -99,7 +99,7 @@ func getSelfCDHashes() (map[CodeSignatureHash]string, error) {
 	// Validate the code signature first, to see if we're signed and it's valid.
 	// If not, we can fallback later.
 	status = sec.CodeCheckValidity(myselfCode, kSecCSDefaultFlags, 0)
-	if err := sec.OSStatusErr(status); err != nil {
+	if err := sec.newError(status); err != nil {
 		return nil, err
 	}
 
@@ -107,7 +107,7 @@ func getSelfCDHashes() (map[CodeSignatureHash]string, error) {
 	var signingInfo _CFDictionaryRef
 	// SecStaticCodeRef is same as SecCodeRef in structure (ptr), just stricter type in C.
 	status = sec.CodeCopySigningInformation(_SecStaticCodeRef(myselfCode), kSecCSDefaultFlags, &signingInfo)
-	if err := sec.OSStatusErr(status); err != nil {
+	if err := sec.newError(status); err != nil {
 		return nil, fmt.Errorf("failed to copy signing information: %w", err)
 	}
 	defer cf.Release(_CFTypeRef(signingInfo))

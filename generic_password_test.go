@@ -24,8 +24,8 @@ func TestKeychainE2E(t *testing.T) {
 		if err := DeleteGenericPassword(GenericPasswordQuery{
 			Service: testService,
 		}); err != nil {
-			var kcErr *ErrSecOSStatus
-			if !errors.As(err, &kcErr) || kcErr.Code() != ErrSecOSStatusCodeItemNotFound {
+			var kcErr *Error
+			if !errors.As(err, &kcErr) || kcErr.Code() != ErrorCodeItemNotFound {
 				t.Fatalf("deleteKeychainPassword failed: %v", err)
 			}
 		}
@@ -78,8 +78,8 @@ func TestKeychainE2E(t *testing.T) {
 
 	// re-try, to ensure it fails how we'd expect
 	if err := CreateGenericPassword(createArgs); err != nil {
-		var kcErr *ErrSecOSStatus
-		if !errors.As(err, &kcErr) || kcErr.Code() != ErrSecOSStatusCodeDuplicateItem {
+		var kcErr *Error
+		if !errors.As(err, &kcErr) || kcErr.Code() != ErrorCodeDuplicateItem {
 			t.Fatalf("CreateGenericPassword should have failed with duplicate item: %v", err)
 		}
 	}
@@ -90,8 +90,8 @@ func TestKeychainE2E(t *testing.T) {
 		Service: testService,
 		Value:   []byte("second-password"),
 	}); err != nil {
-		var kcErr *ErrSecOSStatus
-		if !errors.As(err, &kcErr) || kcErr.Code() != ErrSecOSStatusCodeDuplicateItem {
+		var kcErr *Error
+		if !errors.As(err, &kcErr) || kcErr.Code() != ErrorCodeDuplicateItem {
 			t.Fatalf("CreateGenericPassword should have failed with duplicate item: %v", err)
 		}
 	}

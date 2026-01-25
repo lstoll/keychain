@@ -10,11 +10,11 @@ func TestSecOSStatusErr(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := sec.OSStatusErr(errSecSuccess); err != nil {
+	if err := sec.newError(errSecSuccess); err != nil {
 		t.Errorf("wanted nil err, got: %v", err)
 	}
 
-	err = sec.OSStatusErr(errSecItemNotFound)
+	err = sec.newError(errSecItemNotFound)
 	if err == nil {
 		t.Error("wanted err, got nil")
 	}
@@ -22,7 +22,7 @@ func TestSecOSStatusErr(t *testing.T) {
 		t.Errorf("unexpected message: %s", err.Error())
 	}
 
-	err = sec.OSStatusErr(_OSStatus(128000)) // hopefully not defined
+	err = sec.newError(_OSStatus(128000)) // hopefully not defined
 	if err == nil {
 		t.Error("wanted err, got nil")
 	}

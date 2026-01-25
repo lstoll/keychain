@@ -305,44 +305,45 @@ func getSecurity() (*securityFramework, error) {
 	return _sec, _secErr
 }
 
-type ErrSecOSStatusCode _OSStatus
-
-const (
-	ErrSecOSStatusCodeSuccess       ErrSecOSStatusCode = ErrSecOSStatusCode(errSecSuccess)
-	ErrSecOSStatusCodeItemNotFound  ErrSecOSStatusCode = ErrSecOSStatusCode(errSecItemNotFound)
-	ErrSecOSStatusCodeDuplicateItem ErrSecOSStatusCode = ErrSecOSStatusCode(errSecDuplicateItem)
-)
-
-type ErrSecOSStatus struct {
+type errSecOSStatus struct {
 	code    _OSStatus
 	message string
 }
 
-func (e *ErrSecOSStatus) Error() string {
+func (e *errSecOSStatus) Error() string {
 	return fmt.Sprintf("OSStatus error code %d: %s", e.code, e.message)
 }
 
-func (e *ErrSecOSStatus) Code() ErrSecOSStatusCode {
-	return ErrSecOSStatusCode(e.code)
+func (e *errSecOSStatus) Code() _OSStatus {
+	return e.code
 }
 
-func (s *securityFramework) OSStatusErr(code _OSStatus) error {
+func (s *securityFramework) newError(code _OSStatus) error {
 	if code == errSecSuccess {
 		return nil
 	}
 	cf, err := getCoreFoundation()
 	if err != nil {
-		// If we can't load CoreFoundation, we can't convert the error string.
-		// Return a bare error.
-		return &ErrSecOSStatus{code: code, message: "unknown (corefoundation load failed)"}
+		return &errSecOSStatus{code: code, message: "unknown (corefoundation load failed)"}
 	}
 
 	msgRef := s.CopyErrorMessageString(code, 0)
 	msg := cf.CFStringToString(msgRef)
 	cf.Release(_CFTypeRef(msgRef))
 
-	return &ErrSecOSStatus{
-		code:    code,
-		message: msg,
+	errCode := ErrorCodeUnknown
+	switch code {
+	case errSecItemNotFound:
+		errCode = ErrorCodeItemNotFound
+	case errSecDuplicateItem:
+		errCode = ErrorCodeDuplicateItem
+	}
+
+	return &Error{
+		code: errCode,
+		cause: &errSecOSStatus{
+			code:    code,
+			message: msg,
+		},
 	}
 }

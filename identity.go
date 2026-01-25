@@ -101,7 +101,7 @@ func (i *Identity) Delete() error {
 			return err
 		}
 		defer cf.Release(_CFTypeRef(query))
-		return sec.OSStatusErr(sec.ItemDelete(query))
+		return sec.newError(sec.ItemDelete(query))
 	default:
 		return fmt.Errorf("cannot delete identity: unknown type %v", i.identityType)
 	}
@@ -123,7 +123,7 @@ func (i *Identity) Signer() (crypto.Signer, error) {
 	}
 
 	var keyRef _SecKeyRef
-	if err := sec.OSStatusErr(sec.IdentityCopyPrivateKey(i.identityRef, &keyRef)); err != nil {
+	if err := sec.newError(sec.IdentityCopyPrivateKey(i.identityRef, &keyRef)); err != nil {
 		return nil, fmt.Errorf("copying private key: %w", err)
 	}
 
@@ -300,8 +300,8 @@ func ListIdentities(query IdentityQuery) ([]*Identity, error) {
 
 	var res _CFTypeRef
 	osstatus := sec.ItemCopyMatching(queryDict, &res)
-	if err := sec.OSStatusErr(osstatus); err != nil {
-		var secErr *ErrSecOSStatus
+	if err := sec.newError(osstatus); err != nil {
+		var secErr *errSecOSStatus
 		if errors.As(err, &secErr) && secErr.code == errSecItemNotFound {
 			return nil, nil
 		}
@@ -393,7 +393,7 @@ func (i *Identity) Certificate() (*x509.Certificate, error) {
 
 	// Get the certificate from the identity
 	var certRef _SecCertificateRef
-	if err := sec.OSStatusErr(sec.IdentityCopyCertificate(i.identityRef, &certRef)); err != nil {
+	if err := sec.newError(sec.IdentityCopyCertificate(i.identityRef, &certRef)); err != nil {
 		i.certErr = fmt.Errorf("copying certificate: %w", err)
 		return nil, i.certErr
 	}
@@ -468,7 +468,7 @@ func (i *Identity) ensureKeyFields() error {
 
 	// Get the private key from the identity
 	var keyRef _SecKeyRef
-	if err := sec.OSStatusErr(sec.IdentityCopyPrivateKey(i.identityRef, &keyRef)); err != nil {
+	if err := sec.newError(sec.IdentityCopyPrivateKey(i.identityRef, &keyRef)); err != nil {
 		i.keyFieldsErr = fmt.Errorf("copying private key: %w", err)
 		return i.keyFieldsErr
 	}
