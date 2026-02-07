@@ -252,7 +252,10 @@ func GetIdentity(query IdentityQuery) (*Identity, error) {
 	}
 
 	if len(results) == 0 {
-		return nil, fmt.Errorf("no identity found matching query")
+		return nil, &Error{
+			message: "Identity not found for query",
+			code:    ErrorCodeItemNotFound,
+		}
 	}
 	if len(results) > 1 {
 		return nil, fmt.Errorf("multiple identities (%d) found matching query; use more specific criteria", len(results))
@@ -261,7 +264,7 @@ func GetIdentity(query IdentityQuery) (*Identity, error) {
 	return results[0], nil
 }
 
-// listIdentities queries kSecClassIdentity and detects CTK identities by their token ID.
+// ListIdentities queries kSecClassIdentity and detects CTK identities by their token ID.
 func ListIdentities(query IdentityQuery) ([]*Identity, error) {
 	cf, err := getCoreFoundation()
 	if err != nil {
