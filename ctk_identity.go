@@ -216,9 +216,9 @@ func tempFilename(pattern string) (string, error) {
 	}
 	hexPrefix := hex.EncodeToString(randomBytes)
 
-	name := pattern
-	if idx := strings.Index(pattern, "*"); idx != -1 {
-		name = pattern[:idx] + hexPrefix + pattern[idx+1:]
+	var name string
+	if before, after, ok := strings.Cut(pattern, "*"); ok {
+		name = before + hexPrefix + after
 	} else {
 		name = hexPrefix + pattern
 	}

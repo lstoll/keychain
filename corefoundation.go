@@ -3,6 +3,7 @@
 package keychain
 
 import (
+	"bytes"
 	"fmt"
 	"sync"
 	"unsafe"
@@ -42,27 +43,32 @@ type coreFoundation struct {
 
 	NumberIntType _CFNumberType
 
-	Release                    func(cf _CFTypeRef)
-	Retain                     func(cf _CFTypeRef) _CFTypeRef
-	DictionaryCreate           func(allocator _CFAllocatorRef, keys *unsafe.Pointer, values *unsafe.Pointer, numValues _CFIndex, keyCallBacks *_CFDictionaryKeyCallBacks, valueCallBacks *_CFDictionaryValueCallBacks) _CFDictionaryRef
-	StringCreateWithCString    func(alloc _CFAllocatorRef, cStr string, encoding uint32) _CFStringRef
-	ArrayGetCount              func(a _CFArrayRef) _CFIndex
-	ArrayGetValues             func(a _CFArrayRef, rnge _CFRange, res *unsafe.Pointer)
-	StringGetCString           func(s _CFStringRef, buffer []byte, bufferSize _CFIndex, encoding _CFStringEncoding) bool
-	StringGetLength            func(theString _CFStringRef) _CFIndex
-	DataCreate                 func(allocator _CFAllocatorRef, bytes *byte, length _CFIndex) _CFDataRef
-	DataGetLength              func(theData _CFDataRef) _CFIndex
-	DataGetBytePtr             func(theData _CFDataRef) *byte
-	DataGetBytes               func(theData _CFDataRef, range_ _CFRange, buffer *byte)
-	DictionaryGetCount         func(theDict _CFDictionaryRef) _CFIndex
-	DictionaryGetKeysAndValues func(theDict _CFDictionaryRef, keys *unsafe.Pointer, values *unsafe.Pointer)
-	DictionaryGetValue         func(theDict _CFDictionaryRef, key _CFTypeRef) _CFTypeRef
-	GetTypeID                  func(cf _CFTypeRef) _CFTypeID
-	StringGetTypeID            func() _CFTypeID
-	DataGetTypeID              func() _CFTypeID
-	NumberGetTypeID            func() _CFTypeID
-	ArrayGetTypeID             func() _CFTypeID
-	NumberGetValue             func(number _CFNumberRef, theType _CFNumberType, valuePtr unsafe.Pointer) bool
+	Release                         func(cf _CFTypeRef)
+	Retain                          func(cf _CFTypeRef) _CFTypeRef
+	DictionaryCreate                func(allocator _CFAllocatorRef, keys *unsafe.Pointer, values *unsafe.Pointer, numValues _CFIndex, keyCallBacks *_CFDictionaryKeyCallBacks, valueCallBacks *_CFDictionaryValueCallBacks) _CFDictionaryRef
+	StringCreateWithCString         func(alloc _CFAllocatorRef, cStr string, encoding uint32) _CFStringRef
+	ArrayGetCount                   func(a _CFArrayRef) _CFIndex
+	ArrayGetValues                  func(a _CFArrayRef, rnge _CFRange, res *unsafe.Pointer)
+	StringGetCString                func(s _CFStringRef, buffer []byte, bufferSize _CFIndex, encoding _CFStringEncoding) bool
+	StringGetLength                 func(theString _CFStringRef) _CFIndex
+	StringGetMaximumSizeForEncoding func(numChars _CFIndex, encoding _CFStringEncoding) _CFIndex
+	DataCreate                      func(allocator _CFAllocatorRef, bytes *byte, length _CFIndex) _CFDataRef
+	DataGetLength                   func(theData _CFDataRef) _CFIndex
+	DataGetBytePtr                  func(theData _CFDataRef) *byte
+	DataGetBytes                    func(theData _CFDataRef, range_ _CFRange, buffer *byte)
+	DictionaryGetCount              func(theDict _CFDictionaryRef) _CFIndex
+	DictionaryGetKeysAndValues      func(theDict _CFDictionaryRef, keys *unsafe.Pointer, values *unsafe.Pointer)
+	DictionaryGetValue              func(theDict _CFDictionaryRef, key _CFTypeRef) _CFTypeRef
+	GetTypeID                       func(cf _CFTypeRef) _CFTypeID
+	StringGetTypeID                 func() _CFTypeID
+	DataGetTypeID                   func() _CFTypeID
+	NumberGetTypeID                 func() _CFTypeID
+	ArrayGetTypeID                  func() _CFTypeID
+	NumberGetValue                  func(number _CFNumberRef, theType _CFNumberType, valuePtr unsafe.Pointer) bool
+
+	TypeArrayCallBacks   uintptr // &kCFTypeArrayCallBacks
+	ArrayCreate          func(allocator _CFAllocatorRef, values *unsafe.Pointer, numValues _CFIndex, callBacks uintptr) _CFArrayRef
+	ErrorCopyDescription func(err _CFErrorRef) _CFStringRef
 }
 
 var (
@@ -137,6 +143,10 @@ func getCoreFoundation() (*coreFoundation, error) {
 			_cfErr = err
 			return
 		}
+		if c.StringGetMaximumSizeForEncoding, err = registerFunc[func(numChars _CFIndex, encoding _CFStringEncoding) _CFIndex](handle, "CFStringGetMaximumSizeForEncoding"); err != nil {
+			_cfErr = err
+			return
+		}
 		if c.DataCreate, err = registerFunc[func(allocator _CFAllocatorRef, bytes *byte, length _CFIndex) _CFDataRef](handle, "CFDataCreate"); err != nil {
 			_cfErr = err
 			return
@@ -189,6 +199,20 @@ func getCoreFoundation() (*coreFoundation, error) {
 			_cfErr = err
 			return
 		}
+		if kCFTypeArrayCallBacks, err := purego.Dlsym(handle, "kCFTypeArrayCallBacks"); err == nil {
+			c.TypeArrayCallBacks = kCFTypeArrayCallBacks
+		} else {
+			_cfErr = err
+			return
+		}
+		if c.ArrayCreate, err = registerFunc[func(allocator _CFAllocatorRef, values *unsafe.Pointer, numValues _CFIndex, callBacks uintptr) _CFArrayRef](handle, "CFArrayCreate"); err != nil {
+			_cfErr = err
+			return
+		}
+		if c.ErrorCopyDescription, err = registerFunc[func(err _CFErrorRef) _CFStringRef](handle, "CFErrorCopyDescription"); err != nil {
+			_cfErr = err
+			return
+		}
 
 		_cf = c
 	})
@@ -201,9 +225,26 @@ func (c *coreFoundation) StringToCFString(s string) _CFStringRef {
 }
 
 func (c *coreFoundation) CFStringToString(s _CFStringRef) string {
-	len := c.StringGetLength(s) + 1
-	buf := make([]byte, len-1)
-	c.StringGetCString(s, buf[:], len, c.StringEncodingUTF8)
+	if s == 0 {
+		return ""
+	}
+	numChars := c.StringGetLength(s)
+	if numChars == 0 {
+		return ""
+	}
+	// StringGetLength is in characters, not UTF-8 bytes; size the buffer using
+	// CFStringGetMaximumSizeForEncoding so we do not truncate (e.g. CFError descriptions).
+	maxBytes := c.StringGetMaximumSizeForEncoding(numChars, c.StringEncodingUTF8) + 1
+	if maxBytes <= 0 {
+		return ""
+	}
+	buf := make([]byte, maxBytes)
+	if !c.StringGetCString(s, buf, maxBytes, c.StringEncodingUTF8) {
+		return ""
+	}
+	if i := bytes.IndexByte(buf, 0); i >= 0 {
+		return string(buf[:i])
+	}
 	return string(buf)
 }
 
@@ -245,6 +286,18 @@ func (c *coreFoundation) BytesFromCFData(d _CFDataRef) []byte {
 	ret := make([]byte, l)
 	c.DataGetBytes(d, _CFRange{0, l}, &ret[0])
 	return ret
+}
+
+// ArrayOfRefs returns a retained CFArray of Core Foundation objects.
+func (c *coreFoundation) ArrayOfRefs(values []_CFTypeRef) _CFArrayRef {
+	if len(values) == 0 {
+		return c.ArrayCreate(kCFAllocatorDefault, nil, 0, c.TypeArrayCallBacks)
+	}
+	ptrs := make([]unsafe.Pointer, len(values))
+	for i, v := range values {
+		ptrs[i] = v.Ptr()
+	}
+	return c.ArrayCreate(kCFAllocatorDefault, &ptrs[0], _CFIndex(len(ptrs)), c.TypeArrayCallBacks)
 }
 
 func (c *coreFoundation) GoSliceFromCFArray(arr _CFArrayRef) []_CFTypeRef {
@@ -295,4 +348,11 @@ func (c *coreFoundation) GetDictionaryInt(dict _CFDictionaryRef, key _CFStringRe
 		}
 	}
 	return 0, false
+}
+
+func boolToUint8(b bool) uint8 {
+	if b {
+		return 1
+	}
+	return 0
 }

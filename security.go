@@ -12,6 +12,8 @@ import (
 type (
 	_SecIdentityRef    uintptr
 	_SecCertificateRef uintptr
+	_SecTrustRef       uintptr
+	_SecPolicyRef      uintptr
 	_OSStatus          int32
 	_SecKeyRef         uintptr
 	_SecCodeRef        uintptr
@@ -60,20 +62,29 @@ type securityFramework struct {
 	KeyAlgorithmECDSASignatureDigestX962SHA384 _SecKeyAlgorithm
 	KeyAlgorithmECDSASignatureDigestX962SHA512 _SecKeyAlgorithm
 
-	ItemCopyMatching              func(query _CFDictionaryRef, res *_CFTypeRef) _OSStatus
-	ItemAdd                       func(attributes _CFDictionaryRef, result *_CFTypeRef) _OSStatus
-	ItemDelete                    func(query _CFDictionaryRef) _OSStatus
-	CopyErrorMessageString        func(s _OSStatus, reserved uintptr) _CFStringRef
-	CodeCopySelf                  func(flags uint32, code *_SecCodeRef) _OSStatus
-	CodeCheckValidity             func(code _SecCodeRef, flags uint32, requirement _CFTypeRef) _OSStatus
-	CodeCopySigningInformation    func(code _SecStaticCodeRef, flags uint32, information *_CFDictionaryRef) _OSStatus
-	KeyCopyAttributes             func(key _SecKeyRef) _CFDictionaryRef
-	KeyCopyPublicKey              func(key _SecKeyRef) _SecKeyRef
-	KeyCopyExternalRepresentation func(key _SecKeyRef, error *_CFErrorRef) _CFDataRef
-	KeyCreateSignature            func(key _SecKeyRef, algorithm _SecKeyAlgorithm, signedData _CFDataRef, error *_CFErrorRef) _CFDataRef
-	IdentityCopyPrivateKey        func(identity _SecIdentityRef, privateKey *_SecKeyRef) _OSStatus
-	IdentityCopyCertificate       func(identity _SecIdentityRef, certificate *_SecCertificateRef) _OSStatus
-	CertificateCopyData           func(certificate _SecCertificateRef) _CFDataRef
+	ItemCopyMatching               func(query _CFDictionaryRef, res *_CFTypeRef) _OSStatus
+	ItemAdd                        func(attributes _CFDictionaryRef, result *_CFTypeRef) _OSStatus
+	ItemDelete                     func(query _CFDictionaryRef) _OSStatus
+	CopyErrorMessageString         func(s _OSStatus, reserved uintptr) _CFStringRef
+	CodeCopySelf                   func(flags uint32, code *_SecCodeRef) _OSStatus
+	CodeCheckValidity              func(code _SecCodeRef, flags uint32, requirement _CFTypeRef) _OSStatus
+	CodeCopySigningInformation     func(code _SecStaticCodeRef, flags uint32, information *_CFDictionaryRef) _OSStatus
+	KeyCopyAttributes              func(key _SecKeyRef) _CFDictionaryRef
+	KeyCopyPublicKey               func(key _SecKeyRef) _SecKeyRef
+	KeyCopyExternalRepresentation  func(key _SecKeyRef, error *_CFErrorRef) _CFDataRef
+	KeyCreateSignature             func(key _SecKeyRef, algorithm _SecKeyAlgorithm, signedData _CFDataRef, error *_CFErrorRef) _CFDataRef
+	IdentityCopyPrivateKey         func(identity _SecIdentityRef, privateKey *_SecKeyRef) _OSStatus
+	IdentityCopyCertificate        func(identity _SecIdentityRef, certificate *_SecCertificateRef) _OSStatus
+	CertificateCopyData            func(certificate _SecCertificateRef) _CFDataRef
+	CertificateCreateWithData      func(allocator _CFAllocatorRef, data _CFDataRef) _SecCertificateRef
+	PolicyCreateBasicX509          func() _SecPolicyRef
+	PolicyCreateSSL                func(server uint8, hostname _CFStringRef) _SecPolicyRef
+	TrustCreateWithCertificates    func(certificates _CFArrayRef, policies _CFArrayRef, trust *_SecTrustRef) _OSStatus
+	TrustSetNetworkFetchAllowed    func(trust _SecTrustRef, allowed uint8)
+	TrustSetAnchorCertificates     func(trust _SecTrustRef, anchorCertificates _CFArrayRef) _OSStatus
+	TrustSetAnchorCertificatesOnly func(trust _SecTrustRef, anchorOnly uint8)
+	TrustEvaluateWithError         func(trust _SecTrustRef, error *_CFErrorRef) bool
+	TrustCopyCertificateChain      func(trust _SecTrustRef) _CFArrayRef
 }
 
 var (
@@ -295,6 +306,42 @@ func getSecurity() (*securityFramework, error) {
 			return
 		}
 		if s.CertificateCopyData, err = registerFunc[func(certificate _SecCertificateRef) _CFDataRef](handle, "SecCertificateCopyData"); err != nil {
+			_secErr = err
+			return
+		}
+		if s.CertificateCreateWithData, err = registerFunc[func(allocator _CFAllocatorRef, data _CFDataRef) _SecCertificateRef](handle, "SecCertificateCreateWithData"); err != nil {
+			_secErr = err
+			return
+		}
+		if s.PolicyCreateBasicX509, err = registerFunc[func() _SecPolicyRef](handle, "SecPolicyCreateBasicX509"); err != nil {
+			_secErr = err
+			return
+		}
+		if s.PolicyCreateSSL, err = registerFunc[func(server uint8, hostname _CFStringRef) _SecPolicyRef](handle, "SecPolicyCreateSSL"); err != nil {
+			_secErr = err
+			return
+		}
+		if s.TrustCreateWithCertificates, err = registerFunc[func(certificates _CFArrayRef, policies _CFArrayRef, trust *_SecTrustRef) _OSStatus](handle, "SecTrustCreateWithCertificates"); err != nil {
+			_secErr = err
+			return
+		}
+		if s.TrustSetNetworkFetchAllowed, err = registerFunc[func(trust _SecTrustRef, allowed uint8)](handle, "SecTrustSetNetworkFetchAllowed"); err != nil {
+			_secErr = err
+			return
+		}
+		if s.TrustSetAnchorCertificates, err = registerFunc[func(trust _SecTrustRef, anchorCertificates _CFArrayRef) _OSStatus](handle, "SecTrustSetAnchorCertificates"); err != nil {
+			_secErr = err
+			return
+		}
+		if s.TrustSetAnchorCertificatesOnly, err = registerFunc[func(trust _SecTrustRef, anchorOnly uint8)](handle, "SecTrustSetAnchorCertificatesOnly"); err != nil {
+			_secErr = err
+			return
+		}
+		if s.TrustEvaluateWithError, err = registerFunc[func(trust _SecTrustRef, error *_CFErrorRef) bool](handle, "SecTrustEvaluateWithError"); err != nil {
+			_secErr = err
+			return
+		}
+		if s.TrustCopyCertificateChain, err = registerFunc[func(trust _SecTrustRef) _CFArrayRef](handle, "SecTrustCopyCertificateChain"); err != nil {
 			_secErr = err
 			return
 		}
