@@ -3,9 +3,13 @@
 package keychain
 
 import (
+	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
 )
 
 /* CTK identities created with: sc_auth create-ctk-identity -l <label> -k p-256-ne -t none */
@@ -25,15 +29,21 @@ const (
 	CTKKeyTypeP384 CTKKeyType = "p-384-ne"
 )
 
-// CreateCTKIdentity creates a new CTK identity with the given label and key type.
-// This shells out to sc_auth create-ctk-identity.
-// Returns the created identity. Note: Multiple identities can have the same label.
-func CreateCTKIdentity(label string, keyType CTKKeyType) (*Identity, error) {
-	if label == "" {
+type CreateCTKIdentityInput struct {
+	Label      string
+	KeyType    CTKKeyType
+	CommonName string
+}
+
+// CreateCTKIdentity creates a new CTK identity with the given label and key
+// type. This shells out to sc_auth create-ctk-identity and returns the created
+// identity. Note: Multiple identities can have the same label.
+func CreateCTKIdentity(input CreateCTKIdentityInput) (*Identity, error) {
+	if input.Label == "" {
 		return nil, fmt.Errorf("label is required")
 	}
-	if keyType == "" {
-		keyType = CTKKeyTypeP256
+	if input.KeyType == "" {
+		input.KeyType = CTKKeyTypeP256
 	}
 
 	// Get existing identity hashes before creation
@@ -49,7 +59,17 @@ func CreateCTKIdentity(label string, keyType CTKKeyType) (*Identity, error) {
 	}
 
 	// Create the identity
-	cmd := exec.Command("sc_auth", "create-ctk-identity", "-l", label, "-k", string(keyType), "-t", "none")
+	args := []string{
+		"create-ctk-identity",
+		"-l", input.Label,
+		"-k", string(input.KeyType),
+		"-t", "none",
+	}
+	if input.CommonName != "" {
+		args = append(args, "-N", input.CommonName)
+	}
+
+	cmd := exec.Command("sc_auth", args...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return nil, fmt.Errorf("sc_auth create-ctk-identity failed: %w: %s", err, string(output))
@@ -67,7 +87,7 @@ func CreateCTKIdentity(label string, keyType CTKKeyType) (*Identity, error) {
 			continue
 		}
 		hashHex := hex.EncodeToString(hash)
-		if !existingHashes[hashHex] && id.Label() == label {
+		if !existingHashes[hashHex] && id.Label() == input.Label {
 			return id, nil
 		}
 	}
@@ -105,4 +125,104 @@ func DeleteCTKIdentityByLabel(label string) error {
 		return fmt.Errorf("getting public key hash: %w", err)
 	}
 	return DeleteCTKIdentity(hash)
+}
+
+type CreateCTKIdentityCSRInput struct {
+	CommonName string
+}
+
+// CreateCTKIdentityCSR creates a CSR for a given CTK identity. This will return
+// the PEM formatted CSR for this identity.
+//
+// This shells out to sc_auth create-ctk-csr.
+func CreateCTKIdentityCSR(identity *Identity, input CreateCTKIdentityCSRInput) ([]byte, error) {
+	if identity == nil {
+		return nil, fmt.Errorf("identity is required")
+	}
+
+	hash, err := identity.PublicKeyHash()
+	if err != nil {
+		return nil, fmt.Errorf("getting public key hash: %w", err)
+	}
+
+	// Pattern has no extension: ctkcard appends ".csr" to the -f path.
+	csrFile, err := tempFilename("csr-*")
+	if err != nil {
+		return nil, fmt.Errorf("getting temporary filename: %w", err)
+	}
+
+	args := []string{
+		"create-ctk-csr",
+		"-h", hex.EncodeToString(hash),
+		"-f", csrFile,
+	}
+	if input.CommonName != "" {
+		args = append(args, "-N", input.CommonName)
+	}
+
+	cmd := exec.Command("sc_auth", args...)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("sc_auth create-ctk-csr failed: %w: %s", err, string(output))
+	}
+
+	// ctkcard writes the CSR to -f path + ".csr" (see CryptoTokenKit ctkcard create-csr).
+	csrOutPath := csrFile + ".csr"
+	csrPEM, err := os.ReadFile(csrOutPath)
+	if err != nil {
+		return nil, fmt.Errorf("reading CSR file: %w: %s", err, strings.TrimSpace(string(output)))
+	}
+	_ = os.Remove(csrOutPath)
+
+	return csrPEM, nil
+}
+
+// ImportCTKCertificate imports a certificate into the keychain. This must be
+// issued from a CSR that was created for a CTK identity using [CreateCTKIdentityCSR].
+//
+// This shells out to sc_auth import-ctk-certificate.
+func ImportCTKCertificate(certificate []byte) error {
+	if certificate == nil {
+		return fmt.Errorf("certificate is required")
+	}
+
+	certFile, err := tempFilename("certificate-*")
+	if err != nil {
+		return fmt.Errorf("getting temporary filename: %w", err)
+	}
+
+	if err := os.WriteFile(certFile, certificate, 0600); err != nil {
+		return fmt.Errorf("writing certificate file: %w", err)
+	}
+
+	args := []string{
+		"import-ctk-certificate",
+		"-f", certFile,
+	}
+	cmd := exec.Command("sc_auth", args...)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("sc_auth import-ctk-certificate failed: %w: %s", err, string(output))
+	}
+	_ = os.Remove(certFile)
+
+	return nil
+}
+
+func tempFilename(pattern string) (string, error) {
+	randomBytes := make([]byte, 16)
+	if _, err := rand.Read(randomBytes); err != nil {
+		panic(fmt.Sprintf("generating random bytes: %v", err))
+	}
+	hexPrefix := hex.EncodeToString(randomBytes)
+
+	var name string
+	if before, after, ok := strings.Cut(pattern, "*"); ok {
+		name = before + hexPrefix + after
+	} else {
+		name = hexPrefix + pattern
+	}
+
+	tempDir := os.TempDir()
+	return filepath.Join(tempDir, name), nil
 }
