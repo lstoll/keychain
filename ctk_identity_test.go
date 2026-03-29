@@ -5,11 +5,17 @@ package keychain
 import (
 	"crypto"
 	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/hex"
+	"encoding/pem"
+	"math/big"
 	"os"
 	"testing"
+	"time"
 )
 
 // testLabel generates a unique label for test identities
@@ -25,7 +31,7 @@ func TestCreateAndDeleteCTKIdentity(t *testing.T) {
 	label := testLabel("create-delete")
 
 	// Create a new identity
-	identity, err := CreateCTKIdentity(label, CTKKeyTypeP256)
+	identity, err := CreateCTKIdentity(CreateCTKIdentityInput{Label: label, KeyType: CTKKeyTypeP256})
 	if err != nil {
 		t.Fatalf("CreateCTKIdentity failed: %v", err)
 	}
@@ -72,7 +78,7 @@ func TestListCTKIdentities(t *testing.T) {
 	label1 := testLabel("list-1")
 	label2 := testLabel("list-2")
 
-	id1, err := CreateCTKIdentity(label1, CTKKeyTypeP256)
+	id1, err := CreateCTKIdentity(CreateCTKIdentityInput{Label: label1, KeyType: CTKKeyTypeP256})
 	if err != nil {
 		t.Fatalf("CreateCTKIdentity (1) failed: %v", err)
 	}
@@ -83,7 +89,7 @@ func TestListCTKIdentities(t *testing.T) {
 		}
 	})
 
-	id2, err := CreateCTKIdentity(label2, CTKKeyTypeP256)
+	id2, err := CreateCTKIdentity(CreateCTKIdentityInput{Label: label2, KeyType: CTKKeyTypeP256})
 	if err != nil {
 		t.Fatalf("CreateCTKIdentity (2) failed: %v", err)
 	}
@@ -133,7 +139,7 @@ func TestGetCTKIdentityByLabel(t *testing.T) {
 	label := testLabel("get-by-label")
 
 	// Create a test identity
-	created, err := CreateCTKIdentity(label, CTKKeyTypeP256)
+	created, err := CreateCTKIdentity(CreateCTKIdentityInput{Label: label, KeyType: CTKKeyTypeP256})
 	if err != nil {
 		t.Fatalf("CreateCTKIdentity failed: %v", err)
 	}
@@ -169,7 +175,7 @@ func TestGetCTKIdentityByPublicKeyHash(t *testing.T) {
 	label := testLabel("get-by-hash")
 
 	// Create a test identity
-	created, err := CreateCTKIdentity(label, CTKKeyTypeP256)
+	created, err := CreateCTKIdentity(CreateCTKIdentityInput{Label: label, KeyType: CTKKeyTypeP256})
 	if err != nil {
 		t.Fatalf("CreateCTKIdentity failed: %v", err)
 	}
@@ -203,7 +209,7 @@ func TestCTKIdentitySigning(t *testing.T) {
 	label := testLabel("signing")
 
 	// Create a test identity
-	created, err := CreateCTKIdentity(label, CTKKeyTypeP256)
+	created, err := CreateCTKIdentity(CreateCTKIdentityInput{Label: label, KeyType: CTKKeyTypeP256})
 	if err != nil {
 		t.Fatalf("CreateCTKIdentity failed: %v", err)
 	}
@@ -257,7 +263,7 @@ func TestCTKIdentitySelectsCorrectKey(t *testing.T) {
 	label2 := testLabel("select-2")
 
 	// Create two test identities
-	id1, err := CreateCTKIdentity(label1, CTKKeyTypeP256)
+	id1, err := CreateCTKIdentity(CreateCTKIdentityInput{Label: label1, KeyType: CTKKeyTypeP256})
 	if err != nil {
 		t.Fatalf("CreateCTKIdentity (1) failed: %v", err)
 	}
@@ -268,7 +274,7 @@ func TestCTKIdentitySelectsCorrectKey(t *testing.T) {
 		}
 	})
 
-	id2, err := CreateCTKIdentity(label2, CTKKeyTypeP256)
+	id2, err := CreateCTKIdentity(CreateCTKIdentityInput{Label: label2, KeyType: CTKKeyTypeP256})
 	if err != nil {
 		t.Fatalf("CreateCTKIdentity (2) failed: %v", err)
 	}
@@ -321,7 +327,7 @@ func TestCTKIdentityDuplicateLabelError(t *testing.T) {
 	label := testLabel("duplicate")
 
 	// Create two identities with the same label
-	id1, err := CreateCTKIdentity(label, CTKKeyTypeP256)
+	id1, err := CreateCTKIdentity(CreateCTKIdentityInput{Label: label, KeyType: CTKKeyTypeP256})
 	if err != nil {
 		t.Fatalf("CreateCTKIdentity (1) failed: %v", err)
 	}
@@ -332,7 +338,7 @@ func TestCTKIdentityDuplicateLabelError(t *testing.T) {
 		}
 	})
 
-	id2, err := CreateCTKIdentity(label, CTKKeyTypeP256)
+	id2, err := CreateCTKIdentity(CreateCTKIdentityInput{Label: label, KeyType: CTKKeyTypeP256})
 	if err != nil {
 		t.Fatalf("CreateCTKIdentity (2) failed: %v", err)
 	}
@@ -380,7 +386,7 @@ func TestDeleteCTKIdentityByLabel(t *testing.T) {
 	label := testLabel("delete-by-label")
 
 	// Create a test identity
-	created, err := CreateCTKIdentity(label, CTKKeyTypeP256)
+	created, err := CreateCTKIdentity(CreateCTKIdentityInput{Label: label, KeyType: CTKKeyTypeP256})
 	if err != nil {
 		t.Fatalf("CreateCTKIdentity failed: %v", err)
 	}
@@ -396,5 +402,127 @@ func TestDeleteCTKIdentityByLabel(t *testing.T) {
 	_, err = GetIdentity(IdentityQuery{PublicKeyHash: publicKeyHash, Type: IdentityQueryTypeCTK})
 	if err == nil {
 		t.Error("expected error getting deleted identity")
+	}
+}
+
+func TestCTKIdentityCSRImportAndVerify(t *testing.T) {
+	if os.Getenv("TEST_CTK_IDENTITY") != "1" {
+		t.Skip("TEST_CTK_IDENTITY is not set")
+	}
+
+	caKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generating ephemeral CA key: %v", err)
+	}
+	caTemplate := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject: pkix.Name{
+			CommonName:   "ephemeral-ctk-test-ca",
+			Organization: []string{"keychain-test"},
+		},
+		NotBefore:             time.Now().Add(-time.Minute),
+		NotAfter:              time.Now().Add(24 * time.Hour),
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
+		BasicConstraintsValid: true,
+		IsCA:                  true,
+	}
+	caDER, err := x509.CreateCertificate(rand.Reader, caTemplate, caTemplate, &caKey.PublicKey, caKey)
+	if err != nil {
+		t.Fatalf("creating CA certificate: %v", err)
+	}
+	caCert, err := x509.ParseCertificate(caDER)
+	if err != nil {
+		t.Fatalf("parsing CA certificate: %v", err)
+	}
+
+	label := testLabel("csr-import-verify")
+	commonName := "ctk-csr-test-leaf"
+	identity, err := CreateCTKIdentity(CreateCTKIdentityInput{
+		Label:      label,
+		KeyType:    CTKKeyTypeP256,
+		CommonName: commonName,
+	})
+	if err != nil {
+		t.Fatalf("CreateCTKIdentity: %v", err)
+	}
+	hash, err := identity.PublicKeyHash()
+	if err != nil {
+		t.Fatalf("PublicKeyHash: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := DeleteCTKIdentity(hash); err != nil {
+			t.Fatalf("DeleteCTKIdentity: %v", err)
+		}
+	})
+
+	csrPEM, err := CreateCTKIdentityCSR(identity, CreateCTKIdentityCSRInput{CommonName: commonName})
+	if err != nil {
+		t.Fatalf("CreateCTKIdentityCSR: %v", err)
+	}
+	t.Logf("CSR PEM:\n%s", csrPEM)
+
+	block, _ := pem.Decode(csrPEM)
+	if block == nil {
+		t.Fatal("CSR PEM decode: no block")
+	}
+	if block.Type != "CERTIFICATE REQUEST" && block.Type != "NEW CERTIFICATE REQUEST" {
+		t.Fatalf("unexpected CSR PEM type %q", block.Type)
+	}
+	csr, err := x509.ParseCertificateRequest(block.Bytes)
+	if err != nil {
+		t.Fatalf("ParseCertificateRequest: %v", err)
+	}
+	if err := csr.CheckSignature(); err != nil {
+		t.Fatalf("CSR CheckSignature: %v", err)
+	}
+
+	leafTemplate := &x509.Certificate{
+		SerialNumber: big.NewInt(2),
+		Subject:      csr.Subject,
+		NotBefore:    time.Now().Add(-time.Minute),
+		NotAfter:     time.Now().Add(24 * time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+	}
+	leafDER, err := x509.CreateCertificate(rand.Reader, leafTemplate, caCert, csr.PublicKey, caKey)
+	if err != nil {
+		t.Fatalf("signing CSR into leaf certificate: %v", err)
+	}
+	leafPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: leafDER})
+
+	if err := ImportCTKCertificate(leafPEM); err != nil {
+		t.Fatalf("ImportCTKCertificate: %v", err)
+	}
+
+	loaded, err := GetIdentity(IdentityQuery{PublicKeyHash: hash, Type: IdentityQueryTypeCTK})
+	if err != nil {
+		t.Fatalf("GetIdentity after import: %v", err)
+	}
+
+	leafCert, err := loaded.Certificate()
+	if err != nil {
+		t.Fatalf("Certificate: %v", err)
+	}
+
+	if err := leafCert.CheckSignatureFrom(caCert); err != nil {
+		t.Fatalf("leaf certificate not signed by ephemeral CA: %v", err)
+	}
+
+	signer, err := loaded.Signer()
+	if err != nil {
+		t.Fatalf("Signer: %v", err)
+	}
+	msg := []byte("message signed by CTK identity after CSR import")
+	digest := sha256.Sum256(msg)
+	sig, err := signer.Sign(rand.Reader, digest[:], crypto.SHA256)
+	if err != nil {
+		t.Fatalf("Sign: %v", err)
+	}
+	leafPub, ok := leafCert.PublicKey.(*ecdsa.PublicKey)
+	if !ok {
+		t.Fatalf("leaf certificate public key: want *ecdsa.PublicKey, got %T", leafCert.PublicKey)
+	}
+	if !ecdsa.VerifyASN1(leafPub, digest[:], sig) {
+		t.Fatal("signature did not verify against leaf certificate public key (issued by CA)")
 	}
 }
