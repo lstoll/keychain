@@ -33,37 +33,70 @@ type GenericPassword struct {
 	//
 	// https://developer.apple.com/documentation/security/ksecattrgeneric?language=objc
 	GenericAttributes []byte
+	// Synchronizable, if non-nil, sets kSecAttrSynchronizable. Queries must
+	// set this true to see iCloud Keychain items.
+	//
+	// https://developer.apple.com/documentation/security/ksecattrsynchronizable
+	Synchronizable *bool
+	// UseDataProtectionKeychain, if non-nil, sets kSecUseDataProtectionKeychain.
+	// Implied by Synchronizable; set it explicitly anyway.
+	//
+	// https://developer.apple.com/documentation/security/ksecusedataprotectionkeychain
+	UseDataProtectionKeychain *bool
+	// AccessGroup is kSecAttrAccessGroup (typically TEAMID.bundleID).
+	//
+	// https://developer.apple.com/documentation/security/ksecattraccessgroup
+	AccessGroup string
+	// Accessible is kSecAttrAccessible. Do not set this when AccessControl is set.
+	//
+	// https://developer.apple.com/documentation/security/ksecattraccessible
+	Accessible Accessible
+	// AccessControl is kSecAttrAccessControl (Touch ID / passcode). Do not also
+	// set Accessible or kSecAttrAccess (legacy ACL).
+	AccessControl *AccessControl
 }
 
 func (g *GenericPassword) toAttributes(cf *coreFoundation, sec *securityFramework) (_CFDictionaryRef, error) {
 	attrs := map[_CFTypeRef]_CFTypeRef{
 		_CFTypeRef(sec.Class): _CFTypeRef(sec.ClassGenericPassword),
 	}
+	var owned []_CFTypeRef
+	defer func() { releaseAll(cf, owned) }()
 
 	if g.Account != "" {
 		accountRef := cf.StringToCFString(g.Account)
-		defer cf.Release(_CFTypeRef(accountRef))
+		owned = append(owned, _CFTypeRef(accountRef))
 		attrs[_CFTypeRef(sec.AttrAccount)] = _CFTypeRef(accountRef)
 	}
 	if g.Service != "" {
 		serviceRef := cf.StringToCFString(g.Service)
-		defer cf.Release(_CFTypeRef(serviceRef))
+		owned = append(owned, _CFTypeRef(serviceRef))
 		attrs[_CFTypeRef(sec.AttrService)] = _CFTypeRef(serviceRef)
 	}
 	if g.Label != "" {
 		labelRef := cf.StringToCFString(g.Label)
-		defer cf.Release(_CFTypeRef(labelRef))
+		owned = append(owned, _CFTypeRef(labelRef))
 		attrs[_CFTypeRef(sec.AttrLabel)] = _CFTypeRef(labelRef)
 	}
 	if len(g.GenericAttributes) > 0 {
 		genericRef := cf.BytesToCFData(g.GenericAttributes)
-		defer cf.Release(_CFTypeRef(genericRef))
+		owned = append(owned, _CFTypeRef(genericRef))
 		attrs[_CFTypeRef(sec.AttrGeneric)] = _CFTypeRef(genericRef)
 	}
 	if len(g.Value) > 0 {
 		valueRef := cf.BytesToCFData(g.Value)
-		defer cf.Release(_CFTypeRef(valueRef))
+		owned = append(owned, _CFTypeRef(valueRef))
 		attrs[_CFTypeRef(sec.ValueData)] = _CFTypeRef(valueRef)
+	}
+
+	if err := putSharedItemAttrs(attrs, sharedItemAttrs{
+		Synchronizable:            g.Synchronizable,
+		UseDataProtectionKeychain: g.UseDataProtectionKeychain,
+		AccessGroup:               g.AccessGroup,
+		Accessible:                g.Accessible,
+		AccessControl:             g.AccessControl,
+	}, &owned, cf, sec); err != nil {
+		return 0, err
 	}
 
 	return cf.MapToCFDictionary(attrs)
@@ -123,23 +156,62 @@ type GenericPasswordQuery struct {
 	//
 	// https://developer.apple.com/documentation/security/ksecattrservice?language=objc
 	Service string
+	// Synchronizable, if non-nil, sets kSecAttrSynchronizable. Queries must
+	// set this true to see iCloud Keychain items.
+	Synchronizable *bool
+	// SynchronizableAny, if true, matches both synchronizable and local items.
+	// Mutually exclusive with Synchronizable.
+	SynchronizableAny bool
+	// UseDataProtectionKeychain, if non-nil, sets kSecUseDataProtectionKeychain.
+	UseDataProtectionKeychain *bool
+	// AccessGroup is kSecAttrAccessGroup.
+	AccessGroup string
+	// AuthenticationContext is kSecUseAuthenticationContext. Pass on secret
+	// reads of userPresence items; do not pass on attributes-only queries.
+	AuthenticationContext *AuthContext
+	// OperationPrompt is kSecUseOperationPrompt.
+	OperationPrompt string
 }
 
 func (g *GenericPasswordQuery) toQueryMap(addlAttrs map[_CFTypeRef]_CFTypeRef, cf *coreFoundation, sec *securityFramework) (_CFDictionaryRef, error) {
 	query := map[_CFTypeRef]_CFTypeRef{
 		_CFTypeRef(sec.Class): _CFTypeRef(sec.ClassGenericPassword),
 	}
+	var owned []_CFTypeRef
+	defer func() { releaseAll(cf, owned) }()
 
 	if g.Account != "" {
 		accountRef := cf.StringToCFString(g.Account)
-		defer cf.Release(_CFTypeRef(accountRef))
+		owned = append(owned, _CFTypeRef(accountRef))
 		query[_CFTypeRef(sec.AttrAccount)] = _CFTypeRef(accountRef)
 	}
 
 	if g.Service != "" {
 		serviceRef := cf.StringToCFString(g.Service)
-		defer cf.Release(_CFTypeRef(serviceRef))
+		owned = append(owned, _CFTypeRef(serviceRef))
 		query[_CFTypeRef(sec.AttrService)] = _CFTypeRef(serviceRef)
+	}
+
+	if g.SynchronizableAny {
+		if g.Synchronizable != nil {
+			return 0, fmt.Errorf("cannot set both Synchronizable and SynchronizableAny")
+		}
+		query[_CFTypeRef(sec.AttrSynchronizable)] = _CFTypeRef(sec.AttrSynchronizableAny)
+	}
+	if err := putSharedItemAttrs(query, sharedItemAttrs{
+		Synchronizable:            g.Synchronizable,
+		UseDataProtectionKeychain: g.UseDataProtectionKeychain,
+		AccessGroup:               g.AccessGroup,
+	}, &owned, cf, sec); err != nil {
+		return 0, err
+	}
+	if g.AuthenticationContext != nil {
+		query[_CFTypeRef(sec.UseAuthenticationContext)] = _CFTypeRef(g.AuthenticationContext.id)
+	}
+	if g.OperationPrompt != "" {
+		promptRef := cf.StringToCFString(g.OperationPrompt)
+		owned = append(owned, _CFTypeRef(promptRef))
+		query[_CFTypeRef(sec.UseOperationPrompt)] = _CFTypeRef(promptRef)
 	}
 
 	maps.Copy(query, addlAttrs)
@@ -198,7 +270,7 @@ func GetGenericPassword(query GenericPasswordQuery) ([]byte, error) {
 	var r _CFTypeRef
 	status := sec.ItemCopyMatching(q, &r)
 	if err := sec.newError(status); err != nil {
-		return nil, fmt.Errorf("getting generic password attributes: %w", err)
+		return nil, fmt.Errorf("getting generic password: %w", err)
 	}
 	defer cf.Release(_CFTypeRef(r))
 
@@ -275,4 +347,47 @@ func DeleteGenericPassword(query GenericPasswordQuery) error {
 	}
 
 	return nil
+}
+
+type sharedItemAttrs struct {
+	Synchronizable            *bool
+	UseDataProtectionKeychain *bool
+	AccessGroup               string
+	Accessible                Accessible
+	AccessControl             *AccessControl
+}
+
+func putSharedItemAttrs(attrs map[_CFTypeRef]_CFTypeRef, a sharedItemAttrs, owned *[]_CFTypeRef, cf *coreFoundation, sec *securityFramework) error {
+	putOptionalBool(attrs, sec.AttrSynchronizable, a.Synchronizable, cf)
+	putOptionalBool(attrs, sec.UseDataProtectionKeychain, a.UseDataProtectionKeychain, cf)
+	if a.AccessGroup != "" {
+		ag := cf.StringToCFString(a.AccessGroup)
+		*owned = append(*owned, _CFTypeRef(ag))
+		attrs[_CFTypeRef(sec.AttrAccessGroup)] = _CFTypeRef(ag)
+	}
+	if a.AccessControl != nil && a.Accessible != AccessibleUnspecified {
+		return fmt.Errorf("cannot set both Accessible and AccessControl")
+	}
+	if a.Accessible != AccessibleUnspecified {
+		ref, err := sec.accessibleRef(a.Accessible)
+		if err != nil {
+			return err
+		}
+		attrs[_CFTypeRef(sec.AttrAccessible)] = _CFTypeRef(ref)
+	}
+	if a.AccessControl != nil {
+		sac, err := sec.createAccessControl(cf, *a.AccessControl)
+		if err != nil {
+			return err
+		}
+		*owned = append(*owned, _CFTypeRef(sac))
+		attrs[_CFTypeRef(sec.AttrAccessControl)] = _CFTypeRef(sac)
+	}
+	return nil
+}
+
+func releaseAll(cf *coreFoundation, refs []_CFTypeRef) {
+	for _, r := range refs {
+		cf.Release(r)
+	}
 }

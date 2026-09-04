@@ -8,6 +8,11 @@ const (
 	ErrorCodeUnknown ErrorCode = iota
 	ErrorCodeItemNotFound
 	ErrorCodeDuplicateItem
+	ErrorCodeMissingEntitlement
+	ErrorCodeAuthFailed
+	ErrorCodeUserCanceled
+	ErrorCodeInteractionNotAllowed
+	ErrorCodeParam
 )
 
 type Error struct {
