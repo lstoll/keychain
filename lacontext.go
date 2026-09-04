@@ -10,9 +10,28 @@ import (
 	"github.com/ebitengine/purego/objc"
 )
 
-// AuthContext is an LAContext used as kSecUseAuthenticationContext.
-// Keep it alive for as long as it is passed to Keychain queries; Keychain owns
-// the Touch ID / passcode UI when the item has AccessControl + userPresence.
+// AuthPolicy is an LAPolicy value.
+//
+// https://developer.apple.com/documentation/localauthentication/lapolicy
+type AuthPolicy int64
+
+const (
+	// AuthPolicyDeviceOwnerAuthentication is LAPolicyDeviceOwnerAuthentication
+	// (Touch ID, with device passcode fallback).
+	AuthPolicyDeviceOwnerAuthentication AuthPolicy = 2
+)
+
+const (
+	laErrorAuthenticationFailed int64 = -1
+	laErrorUserCancel           int64 = -2
+	laErrorSystemCancel         int64 = -4
+	laErrorAppCancel            int64 = -9
+	laErrorNotInteractive       int64 = -1004
+)
+
+// AuthContext is an LAContext. Use EvaluatePolicy for an app-level presence
+// prompt, or pass it as kSecUseAuthenticationContext when the item itself has
+// AccessControl + userPresence.
 //
 // https://developer.apple.com/documentation/localauthentication/lacontext
 type AuthContext struct {
@@ -24,6 +43,10 @@ var (
 	selInit             = objc.RegisterName("init")
 	selSetReason        = objc.RegisterName("setLocalizedReason:")
 	selSetTouchIDReuse  = objc.RegisterName("setTouchIDAuthenticationAllowableReuseDuration:")
+	selEvaluatePolicy   = objc.RegisterName("evaluatePolicy:localizedReason:reply:")
+	selCode             = objc.RegisterName("code")
+	selLocalizedDesc    = objc.RegisterName("localizedDescription")
+	selUTF8String       = objc.RegisterName("UTF8String")
 	laOnce              sync.Once
 	laErr               error
 	laClass             objc.Class
@@ -53,8 +76,8 @@ func initLocalAuthentication() error {
 	return laErr
 }
 
-// NewAuthContext allocates an LAContext. Callers should create one per process
-// and reuse it for every secret read so Keychain can skip a second prompt.
+// NewAuthContext allocates an LAContext. Reuse one per process so a successful
+// EvaluatePolicy is not repeated, and so Keychain can skip a second ACL prompt.
 func NewAuthContext() (*AuthContext, error) {
 	if err := initLocalAuthentication(); err != nil {
 		return nil, err
@@ -86,7 +109,7 @@ func (c *AuthContext) SetLocalizedReason(reason string) error {
 }
 
 // SetTouchIDReuseDuration sets touchIDAuthenticationAllowableReuseDuration.
-// This reuses a recent Mac unlock with Touch ID, not a previous Keychain read.
+// This reuses a recent Mac unlock with Touch ID, not a previous evaluation.
 func (c *AuthContext) SetTouchIDReuseDuration(seconds float64) error {
 	if c == nil || c.id == 0 {
 		return fmt.Errorf("nil AuthContext")
@@ -110,4 +133,58 @@ func MaximumTouchIDReuseDuration() (float64, error) {
 		return 0, err
 	}
 	return maxTouchIDReuseSecs, nil
+}
+
+// EvaluatePolicy runs LAContext evaluatePolicy:localizedReason:reply: and
+// waits for the reply. Policy DeviceOwnerAuthentication is Touch ID with
+// passcode fallback.
+func (c *AuthContext) EvaluatePolicy(policy AuthPolicy, reason string) error {
+	if c == nil || c.id == 0 {
+		return fmt.Errorf("nil AuthContext")
+	}
+	if reason == "" {
+		return fmt.Errorf("EvaluatePolicy requires a localized reason")
+	}
+	cf, err := getCoreFoundation()
+	if err != nil {
+		return err
+	}
+	s := cf.StringToCFString(reason)
+	defer cf.Release(_CFTypeRef(s))
+
+	done := make(chan error, 1)
+	block := objc.NewBlock(func(_ objc.Block, success uint8, nsErr objc.ID) {
+		if success != 0 {
+			done <- nil
+			return
+		}
+		done <- laReplyError(nsErr)
+	})
+	defer block.Release()
+
+	objc.Send[struct{}](c.id, selEvaluatePolicy, int64(policy), objc.ID(s), block)
+	return <-done
+}
+
+func laReplyError(nsErr objc.ID) error {
+	if nsErr == 0 {
+		return &Error{code: ErrorCodeAuthFailed, message: "LocalAuthentication failed"}
+	}
+	code := objc.Send[int64](nsErr, selCode)
+	msg := "LocalAuthentication failed"
+	if desc := objc.Send[objc.ID](nsErr, selLocalizedDesc); desc != 0 {
+		if utf8 := objc.Send[string](desc, selUTF8String); utf8 != "" {
+			msg = utf8
+		}
+	}
+	errCode := ErrorCodeUnknown
+	switch code {
+	case laErrorAuthenticationFailed:
+		errCode = ErrorCodeAuthFailed
+	case laErrorUserCancel, laErrorSystemCancel, laErrorAppCancel:
+		errCode = ErrorCodeUserCanceled
+	case laErrorNotInteractive:
+		errCode = ErrorCodeInteractionNotAllowed
+	}
+	return &Error{code: errCode, message: msg}
 }
