@@ -277,6 +277,44 @@ func GetGenericPassword(query GenericPasswordQuery) ([]byte, error) {
 	return cf.BytesFromCFData(_CFDataRef(r)), nil
 }
 
+// UpdateGenericPasswordAttributes sets kSecAttrGeneric on the matching item.
+// The secret (kSecValueData) is not modified.
+func UpdateGenericPasswordAttributes(query GenericPasswordQuery, generic []byte) error {
+	cf, err := getCoreFoundation()
+	if err != nil {
+		return err
+	}
+	sec, err := getSecurity()
+	if err != nil {
+		return err
+	}
+	if query.Service == "" && query.Account == "" {
+		return fmt.Errorf("cannot update generic password without service or account")
+	}
+
+	q, err := query.toQueryMap(nil, cf, sec)
+	if err != nil {
+		return err
+	}
+	defer cf.Release(_CFTypeRef(q))
+
+	genericRef := cf.BytesToCFData(generic)
+	defer cf.Release(_CFTypeRef(genericRef))
+	attrs, err := cf.MapToCFDictionary(map[_CFTypeRef]_CFTypeRef{
+		_CFTypeRef(sec.AttrGeneric): _CFTypeRef(genericRef),
+	})
+	if err != nil {
+		return err
+	}
+	defer cf.Release(_CFTypeRef(attrs))
+
+	status := sec.ItemUpdate(q, attrs)
+	if err := sec.newError(status); err != nil {
+		return fmt.Errorf("updating generic password attributes: %w", err)
+	}
+	return nil
+}
+
 func ListGenericPasswords(query GenericPasswordQuery) ([]GenericPassword, error) {
 	cf, err := getCoreFoundation()
 	if err != nil {

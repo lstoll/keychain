@@ -83,6 +83,7 @@ type securityFramework struct {
 
 	ItemCopyMatching               func(query _CFDictionaryRef, res *_CFTypeRef) _OSStatus
 	ItemAdd                        func(attributes _CFDictionaryRef, result *_CFTypeRef) _OSStatus
+	ItemUpdate                     func(query _CFDictionaryRef, attributes _CFDictionaryRef) _OSStatus
 	ItemDelete                     func(query _CFDictionaryRef) _OSStatus
 	AccessControlCreateWithFlags   func(allocator _CFAllocatorRef, protection _CFTypeRef, flags uint64, err *_CFErrorRef) _SecAccessControlRef
 	CopyErrorMessageString         func(s _OSStatus, reserved uintptr) _CFStringRef
@@ -299,6 +300,10 @@ func getSecurity() (*securityFramework, error) {
 			return
 		}
 		if s.ItemAdd, err = registerFunc[func(attributes _CFDictionaryRef, result *_CFTypeRef) _OSStatus](handle, "SecItemAdd"); err != nil {
+			_secErr = err
+			return
+		}
+		if s.ItemUpdate, err = registerFunc[func(query _CFDictionaryRef, attributes _CFDictionaryRef) _OSStatus](handle, "SecItemUpdate"); err != nil {
 			_secErr = err
 			return
 		}

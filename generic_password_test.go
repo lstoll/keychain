@@ -231,6 +231,17 @@ func TestKeychainDataProtectionSync(t *testing.T) {
 		t.Fatalf("attributes-only read returned secret")
 	}
 
+	if err := UpdateGenericPasswordAttributes(q, []byte("updated-attr")); err != nil {
+		t.Fatalf("UpdateGenericPasswordAttributes: %v", err)
+	}
+	attrs, err = GetGenericPasswordAttributes(q)
+	if err != nil {
+		t.Fatalf("GetGenericPasswordAttributes after update: %v", err)
+	}
+	if string(attrs.GenericAttributes) != "updated-attr" {
+		t.Fatalf("generic after update: got %q", attrs.GenericAttributes)
+	}
+
 	got, err := GetGenericPassword(q)
 	if err != nil {
 		t.Fatalf("GetGenericPassword: %v", err)
