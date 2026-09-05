@@ -37,6 +37,7 @@ var kCFAllocatorDefault _CFAllocatorRef = 0
 
 type coreFoundation struct {
 	BooleanTrue                  _CFBooleanRef
+	BooleanFalse                 _CFBooleanRef
 	TypeDictionaryKeyCallBacks   uintptr
 	TypeDictionaryValueCallBacks uintptr
 	StringEncodingUTF8           _CFStringEncoding
@@ -91,6 +92,12 @@ func getCoreFoundation() (*coreFoundation, error) {
 		// Constants
 		if kCFBooleanTrue, err := constsym(handle, "kCFBooleanTrue"); err == nil {
 			c.BooleanTrue = _CFBooleanRef(kCFBooleanTrue)
+		} else {
+			_cfErr = err
+			return
+		}
+		if kCFBooleanFalse, err := constsym(handle, "kCFBooleanFalse"); err == nil {
+			c.BooleanFalse = _CFBooleanRef(kCFBooleanFalse)
 		} else {
 			_cfErr = err
 			return

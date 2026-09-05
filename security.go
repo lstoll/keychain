@@ -10,25 +10,33 @@ import (
 )
 
 type (
-	_SecIdentityRef    uintptr
-	_SecCertificateRef uintptr
-	_SecTrustRef       uintptr
-	_SecPolicyRef      uintptr
-	_OSStatus          int32
-	_SecKeyRef         uintptr
-	_SecCodeRef        uintptr
-	_SecStaticCodeRef  uintptr
-	_SecKeyAlgorithm   _CFStringRef
+	_SecIdentityRef      uintptr
+	_SecCertificateRef   uintptr
+	_SecTrustRef         uintptr
+	_SecPolicyRef        uintptr
+	_OSStatus            int32
+	_SecKeyRef           uintptr
+	_SecCodeRef          uintptr
+	_SecStaticCodeRef    uintptr
+	_SecAccessControlRef uintptr
+	_SecKeyAlgorithm     _CFStringRef
 )
 
 const ( // https://gist.github.com/lefloh/3b4200a8eca40eb3c5596e6b6a7d83e5
-	errSecSuccess       _OSStatus = 0
-	errSecItemNotFound  _OSStatus = -25300
-	errSecDuplicateItem _OSStatus = -25299
+	errSecSuccess               _OSStatus = 0
+	errSecUnimplemented         _OSStatus = -4
+	errSecParam                 _OSStatus = -50
+	errSecUserCanceled          _OSStatus = -128
+	errSecAuthFailed            _OSStatus = -25293
+	errSecDuplicateItem         _OSStatus = -25299
+	errSecItemNotFound          _OSStatus = -25300
+	errSecInteractionNotAllowed _OSStatus = -25308
+	errSecMissingEntitlement    _OSStatus = -34018
 )
 
 const (
-	kSecCSDefaultFlags = 0
+	kSecCSDefaultFlags       = 0
+	kSecCSSigningInformation = 1 << 1
 )
 
 type securityFramework struct {
@@ -50,6 +58,17 @@ type securityFramework struct {
 	AttrApplicationLabel             _CFStringRef
 	AttrKeySizeInBits                _CFStringRef
 	ValueRef                         _CFStringRef
+	AttrSynchronizable               _CFStringRef
+	AttrSynchronizableAny            _CFStringRef
+	AttrAccessible                   _CFStringRef
+	AttrAccessibleWhenUnlocked       _CFStringRef
+	AttrAccessibleAfterFirstUnlock   _CFStringRef
+	UseDataProtectionKeychain        _CFStringRef
+	AttrAccessGroup                  _CFStringRef
+	AttrAccessControl                _CFStringRef
+	UseAuthenticationContext         _CFStringRef
+	UseOperationPrompt               _CFStringRef
+	CodeInfoTeamIdentifier           _CFStringRef
 	CodeInfoCdHashes                 _CFStringRef
 	CodeInfoDigestAlgorithms         _CFStringRef
 	CodeSignatureHashSHA1            int32
@@ -64,7 +83,9 @@ type securityFramework struct {
 
 	ItemCopyMatching               func(query _CFDictionaryRef, res *_CFTypeRef) _OSStatus
 	ItemAdd                        func(attributes _CFDictionaryRef, result *_CFTypeRef) _OSStatus
+	ItemUpdate                     func(query _CFDictionaryRef, attributes _CFDictionaryRef) _OSStatus
 	ItemDelete                     func(query _CFDictionaryRef) _OSStatus
+	AccessControlCreateWithFlags   func(allocator _CFAllocatorRef, protection _CFTypeRef, flags uint64, err *_CFErrorRef) _SecAccessControlRef
 	CopyErrorMessageString         func(s _OSStatus, reserved uintptr) _CFStringRef
 	CodeCopySelf                   func(flags uint32, code *_SecCodeRef) _OSStatus
 	CodeCheckValidity              func(code _SecCodeRef, flags uint32, requirement _CFTypeRef) _OSStatus
@@ -226,6 +247,27 @@ func getSecurity() (*securityFramework, error) {
 			_secErr = err
 			return
 		}
+		for _, item := range []struct {
+			name string
+			dest *_CFStringRef
+		}{
+			{"kSecAttrSynchronizable", &s.AttrSynchronizable},
+			{"kSecAttrSynchronizableAny", &s.AttrSynchronizableAny},
+			{"kSecAttrAccessible", &s.AttrAccessible},
+			{"kSecAttrAccessibleWhenUnlocked", &s.AttrAccessibleWhenUnlocked},
+			{"kSecAttrAccessibleAfterFirstUnlock", &s.AttrAccessibleAfterFirstUnlock},
+			{"kSecUseDataProtectionKeychain", &s.UseDataProtectionKeychain},
+			{"kSecAttrAccessGroup", &s.AttrAccessGroup},
+			{"kSecAttrAccessControl", &s.AttrAccessControl},
+			{"kSecUseAuthenticationContext", &s.UseAuthenticationContext},
+			{"kSecUseOperationPrompt", &s.UseOperationPrompt},
+			{"kSecCodeInfoTeamIdentifier", &s.CodeInfoTeamIdentifier},
+		} {
+			if *item.dest, err = loadCFString(handle, item.name); err != nil {
+				_secErr = err
+				return
+			}
+		}
 
 		s.CodeSignatureHashSHA1 = 1
 		s.CodeSignatureHashSHA256 = 2
@@ -261,7 +303,15 @@ func getSecurity() (*securityFramework, error) {
 			_secErr = err
 			return
 		}
+		if s.ItemUpdate, err = registerFunc[func(query _CFDictionaryRef, attributes _CFDictionaryRef) _OSStatus](handle, "SecItemUpdate"); err != nil {
+			_secErr = err
+			return
+		}
 		if s.ItemDelete, err = registerFunc[func(query _CFDictionaryRef) _OSStatus](handle, "SecItemDelete"); err != nil {
+			_secErr = err
+			return
+		}
+		if s.AccessControlCreateWithFlags, err = registerFunc[func(allocator _CFAllocatorRef, protection _CFTypeRef, flags uint64, err *_CFErrorRef) _SecAccessControlRef](handle, "SecAccessControlCreateWithFlags"); err != nil {
 			_secErr = err
 			return
 		}
@@ -384,6 +434,16 @@ func (s *securityFramework) newError(code _OSStatus) error {
 		errCode = ErrorCodeItemNotFound
 	case errSecDuplicateItem:
 		errCode = ErrorCodeDuplicateItem
+	case errSecMissingEntitlement:
+		errCode = ErrorCodeMissingEntitlement
+	case errSecAuthFailed:
+		errCode = ErrorCodeAuthFailed
+	case errSecUserCanceled:
+		errCode = ErrorCodeUserCanceled
+	case errSecInteractionNotAllowed:
+		errCode = ErrorCodeInteractionNotAllowed
+	case errSecParam:
+		errCode = ErrorCodeParam
 	}
 
 	return &Error{
@@ -393,4 +453,12 @@ func (s *securityFramework) newError(code _OSStatus) error {
 			message: msg,
 		},
 	}
+}
+
+func loadCFString(handle uintptr, name string) (_CFStringRef, error) {
+	val, err := constsym(handle, name)
+	if err != nil {
+		return 0, err
+	}
+	return _CFStringRef(val), nil
 }
