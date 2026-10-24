@@ -2,31 +2,37 @@
 
 package keychain
 
-import "testing"
+import (
+	"errors"
+	"testing"
+
+	"lds.li/keychain/internal/security"
+)
 
 func TestSecOSStatusErr(t *testing.T) {
-	sec, err := getSecurity()
+	sec, err := security.Get()
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if err := sec.newError(errSecSuccess); err != nil {
+	if err := newError(sec, security.ErrSecSuccess); err != nil {
 		t.Errorf("wanted nil err, got: %v", err)
 	}
 
-	err = sec.newError(errSecItemNotFound)
-	if err == nil {
-		t.Error("wanted err, got nil")
+	err = newError(sec, security.ErrSecItemNotFound)
+	if !errors.Is(err, ErrItemNotFound) {
+		t.Fatalf("wanted ErrItemNotFound, got: %v", err)
 	}
-	if err.Error() != "OSStatus error code -25300: The specified item could not be found in the keychain." {
+	if err.Error() != "The specified item could not be found in the keychain." {
 		t.Errorf("unexpected message: %s", err.Error())
 	}
 
-	err = sec.newError(_OSStatus(128000)) // hopefully not defined
-	if err == nil {
-		t.Error("wanted err, got nil")
+	err = newError(sec, security.OSStatus(128000)) // hopefully not defined
+	var e *Error
+	if !errors.As(err, &e) || e.Code() != ErrorCodeUnknown || e.Status() != 128000 {
+		t.Fatalf("unexpected error: %#v", err)
 	}
-	if err.Error() != "OSStatus error code 128000: OSStatus 128000" {
+	if err.Error() != "NSOSStatusErrorDomain 128000: OSStatus 128000" {
 		t.Errorf("unexpected message: %s", err.Error())
 	}
 }

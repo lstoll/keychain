@@ -5,14 +5,18 @@ jobs:
   build:
     name: Go ${{ matrix.go }} (CGO ${{ matrix.cgo == '1' && 'enabled' || 'disabled' }})
     runs-on: macos-latest
+    timeout-minutes: 20
     env:
       GOTOOLCHAIN: local
       CGO_ENABLED: ${{ matrix.cgo }}
-      TEST_KEYCHAIN: 1
-      TEST_CTK_IDENTITY: 1
+      # Runners are VMs, so Secure Enclave tests skip. Data protection tests
+      # skip without entitlements.
+      KEYCHAIN_INTEGRATION: 1
     strategy:
+      fail-fast: false
       matrix:
-        go: [stable] #[ stable, oldstable ]
+        # Test the current and previous Go releases.
+        go: [stable, oldstable]
         cgo: ['0', '1']
 
     steps:
@@ -26,6 +30,17 @@ jobs:
         go-version: ${{ matrix.go }}
       id: go
 
+    # A dedicated, unlocked default keychain, so tests never depend on the
+    # runner's login keychain state or hit a lock prompt.
+    - name: Set up test keychain
+      run: |
+        kc="$RUNNER_TEMP/test.keychain-db"
+        security create-keychain -p ci "$kc"
+        security set-keychain-settings "$kc"
+        security unlock-keychain -p ci "$kc"
+        security list-keychains -d user -s "$kc" $(security list-keychains -d user | tr -d '"')
+        security default-keychain -d user -s "$kc"
+
     - name: Get dependencies
       run: go mod download
 
@@ -33,7 +48,7 @@ jobs:
       run: go build ./...
 
     - name: Test
-      run: go test -v ./...
+      run: go test -v -timeout 10m ./...
 
     - name: Lint
       uses: golangci/golangci-lint-action@v9

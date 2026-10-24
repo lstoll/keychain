@@ -2,34 +2,39 @@
 
 package keychain
 
-import "fmt"
+import (
+	"fmt"
+
+	"lds.li/keychain/internal/corefoundation"
+	"lds.li/keychain/internal/security"
+)
 
 // TeamIdentifier returns the Apple Team ID from the running binary's code
 // signature. Data-protection / iCloud Keychain access groups are TEAMID.bundleID;
 // an unsigned or ad-hoc-signed binary has no Team ID.
 func TeamIdentifier() (string, error) {
-	cf, err := getCoreFoundation()
+	cf, err := corefoundation.Get()
 	if err != nil {
 		return "", err
 	}
-	sec, err := getSecurity()
+	sec, err := security.Get()
 	if err != nil {
 		return "", err
 	}
 
-	var code _SecCodeRef
-	status := sec.CodeCopySelf(kSecCSDefaultFlags, &code)
-	if err := sec.newError(status); err != nil {
+	var code security.SecCodeRef
+	status := sec.CodeCopySelf(security.SecCSDefaultFlags, &code)
+	if err := newError(sec, status); err != nil {
 		return "", fmt.Errorf("SecCodeCopySelf: %w", err)
 	}
-	defer cf.Release(_CFTypeRef(code))
+	defer cf.Release(corefoundation.TypeRef(code))
 
-	var info _CFDictionaryRef
-	status = sec.CodeCopySigningInformation(_SecStaticCodeRef(code), kSecCSSigningInformation, &info)
-	if err := sec.newError(status); err != nil {
+	var info corefoundation.DictionaryRef
+	status = sec.CodeCopySigningInformation(security.SecStaticCodeRef(code), security.SecCSSigningInformation, &info)
+	if err := newError(sec, status); err != nil {
 		return "", fmt.Errorf("SecCodeCopySigningInformation: %w", err)
 	}
-	defer cf.Release(_CFTypeRef(info))
+	defer cf.Release(corefoundation.TypeRef(info))
 
 	team, ok := cf.GetDictionaryString(info, sec.CodeInfoTeamIdentifier)
 	if !ok || team == "" {

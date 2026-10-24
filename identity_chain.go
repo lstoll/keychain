@@ -5,6 +5,9 @@ package keychain
 import (
 	"crypto/x509"
 	"fmt"
+
+	"lds.li/keychain/internal/corefoundation"
+	"lds.li/keychain/internal/security"
 )
 
 // TrustPolicy selects which SecPolicy is used with SecTrust.
@@ -46,11 +49,11 @@ type CertificateChainOptions struct {
 // Use [TrustPolicyBasicX509] for plain PKIX chain building, or
 // [TrustPolicySSLClient] when you want TLS client-certificate policy checks.
 func (i *Identity) CertificateChain(opts *CertificateChainOptions) ([]*x509.Certificate, error) {
-	cf, err := getCoreFoundation()
+	cf, err := corefoundation.Get()
 	if err != nil {
 		return nil, err
 	}
-	sec, err := getSecurity()
+	sec, err := security.Get()
 	if err != nil {
 		return nil, err
 	}
@@ -59,29 +62,29 @@ func (i *Identity) CertificateChain(opts *CertificateChainOptions) ([]*x509.Cert
 		return nil, fmt.Errorf("no identity ref")
 	}
 
-	var leafRef _SecCertificateRef
-	if err := sec.newError(sec.IdentityCopyCertificate(i.identityRef, &leafRef)); err != nil {
+	var leafRef security.SecCertificateRef
+	if err := newError(sec, sec.IdentityCopyCertificate(i.identityRef, &leafRef)); err != nil {
 		return nil, fmt.Errorf("identity certificate: %w", err)
 	}
-	defer cf.Release(_CFTypeRef(leafRef))
+	defer cf.Release(corefoundation.TypeRef(leafRef))
 
-	certsArr := cf.ArrayOfRefs([]_CFTypeRef{_CFTypeRef(leafRef)})
-	defer cf.Release(_CFTypeRef(certsArr))
+	certsArr := cf.ArrayOfRefs([]corefoundation.TypeRef{corefoundation.TypeRef(leafRef)})
+	defer cf.Release(corefoundation.TypeRef(certsArr))
 
 	policy, err := trustPolicyRef(sec, opts)
 	if err != nil {
 		return nil, err
 	}
-	defer cf.Release(_CFTypeRef(policy))
+	defer cf.Release(corefoundation.TypeRef(policy))
 
-	policiesArr := cf.ArrayOfRefs([]_CFTypeRef{_CFTypeRef(policy)})
-	defer cf.Release(_CFTypeRef(policiesArr))
+	policiesArr := cf.ArrayOfRefs([]corefoundation.TypeRef{corefoundation.TypeRef(policy)})
+	defer cf.Release(corefoundation.TypeRef(policiesArr))
 
-	var trust _SecTrustRef
-	if err := sec.newError(sec.TrustCreateWithCertificates(certsArr, policiesArr, &trust)); err != nil {
+	var trust security.SecTrustRef
+	if err := newError(sec, sec.TrustCreateWithCertificates(certsArr, policiesArr, &trust)); err != nil {
 		return nil, fmt.Errorf("SecTrustCreateWithCertificates: %w", err)
 	}
-	defer cf.Release(_CFTypeRef(trust))
+	defer cf.Release(corefoundation.TypeRef(trust))
 
 	networkFetch := true
 	if opts != nil && opts.NetworkFetchAllowed != nil {
@@ -94,17 +97,17 @@ func (i *Identity) CertificateChain(opts *CertificateChainOptions) ([]*x509.Cert
 		if err != nil {
 			return nil, err
 		}
-		defer cf.Release(_CFTypeRef(anchorArr))
-		if err := sec.newError(sec.TrustSetAnchorCertificates(trust, anchorArr)); err != nil {
+		defer cf.Release(corefoundation.TypeRef(anchorArr))
+		if err := newError(sec, sec.TrustSetAnchorCertificates(trust, anchorArr)); err != nil {
 			return nil, fmt.Errorf("SecTrustSetAnchorCertificates: %w", err)
 		}
 		sec.TrustSetAnchorCertificatesOnly(trust, boolToUint8(opts.AnchorCertificatesOnly))
 	}
 
-	var cfErr _CFErrorRef
+	var cfErr corefoundation.ErrorRef
 	ok := sec.TrustEvaluateWithError(trust, &cfErr)
 	if cfErr != 0 {
-		defer cf.Release(_CFTypeRef(cfErr))
+		defer cf.Release(corefoundation.TypeRef(cfErr))
 	}
 	if !ok {
 		msg := trustFailureMessage(cf, cfErr)
@@ -115,12 +118,12 @@ func (i *Identity) CertificateChain(opts *CertificateChainOptions) ([]*x509.Cert
 	if chainArr == 0 {
 		return nil, fmt.Errorf("SecTrustCopyCertificateChain returned nil")
 	}
-	defer cf.Release(_CFTypeRef(chainArr))
+	defer cf.Release(corefoundation.TypeRef(chainArr))
 
 	refs := cf.GoSliceFromCFArray(chainArr)
 	out := make([]*x509.Certificate, 0, len(refs))
 	for _, ref := range refs {
-		certRef := _SecCertificateRef(ref)
+		certRef := security.SecCertificateRef(ref)
 		if certRef == 0 {
 			continue
 		}
@@ -129,7 +132,7 @@ func (i *Identity) CertificateChain(opts *CertificateChainOptions) ([]*x509.Cert
 			continue
 		}
 		der := cf.BytesFromCFData(derData)
-		cf.Release(_CFTypeRef(derData))
+		cf.Release(corefoundation.TypeRef(derData))
 		cert, err := x509.ParseCertificate(der)
 		if err != nil {
 			return nil, fmt.Errorf("parse certificate: %w", err)
@@ -144,7 +147,7 @@ func (i *Identity) CertificateChain(opts *CertificateChainOptions) ([]*x509.Cert
 	return out, nil
 }
 
-func trustPolicyRef(sec *securityFramework, opts *CertificateChainOptions) (_SecPolicyRef, error) {
+func trustPolicyRef(sec *security.Framework, opts *CertificateChainOptions) (security.SecPolicyRef, error) {
 	p := TrustPolicyBasicX509
 	if opts != nil {
 		p = opts.Policy
@@ -169,19 +172,19 @@ func trustPolicyRef(sec *securityFramework, opts *CertificateChainOptions) (_Sec
 	}
 }
 
-func secCertificatesFromDER(cf *coreFoundation, sec *securityFramework, der [][]byte) (_CFArrayRef, error) {
-	refs := make([]_CFTypeRef, 0, len(der))
+func secCertificatesFromDER(cf *corefoundation.Framework, sec *security.Framework, der [][]byte) (corefoundation.ArrayRef, error) {
+	refs := make([]corefoundation.TypeRef, 0, len(der))
 	for _, d := range der {
 		dataRef := cf.BytesToCFData(d)
-		certRef := sec.CertificateCreateWithData(kCFAllocatorDefault, dataRef)
-		cf.Release(_CFTypeRef(dataRef))
+		certRef := sec.CertificateCreateWithData(corefoundation.AllocatorDefault, dataRef)
+		cf.Release(corefoundation.TypeRef(dataRef))
 		if certRef == 0 {
 			for _, r := range refs {
 				cf.Release(r)
 			}
 			return 0, fmt.Errorf("SecCertificateCreateWithData: invalid certificate DER")
 		}
-		refs = append(refs, _CFTypeRef(certRef))
+		refs = append(refs, corefoundation.TypeRef(certRef))
 	}
 	arr := cf.ArrayOfRefs(refs)
 	for _, r := range refs {
@@ -190,7 +193,7 @@ func secCertificatesFromDER(cf *coreFoundation, sec *securityFramework, der [][]
 	return arr, nil
 }
 
-func trustFailureMessage(cf *coreFoundation, errRef _CFErrorRef) string {
+func trustFailureMessage(cf *corefoundation.Framework, errRef corefoundation.ErrorRef) string {
 	if errRef == 0 {
 		return "certificate chain could not be verified"
 	}
@@ -198,6 +201,13 @@ func trustFailureMessage(cf *coreFoundation, errRef _CFErrorRef) string {
 	if desc == 0 {
 		return "certificate chain could not be verified"
 	}
-	defer cf.Release(_CFTypeRef(desc))
+	defer cf.Release(corefoundation.TypeRef(desc))
 	return cf.CFStringToString(desc)
+}
+
+func boolToUint8(b bool) uint8 {
+	if b {
+		return 1
+	}
+	return 0
 }

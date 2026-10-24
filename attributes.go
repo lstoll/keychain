@@ -2,16 +2,16 @@
 
 package keychain
 
-import "fmt"
+import (
+	"fmt"
 
-// Bool returns a pointer to b for optional Keychain boolean attributes.
-func Bool(b bool) *bool {
-	return &b
-}
+	"lds.li/keychain/internal/corefoundation"
+	"lds.li/keychain/internal/security"
+)
 
 // Accessible is a Keychain protection class (kSecAttrAccessible).
 //
-// Do not use ThisDeviceOnly classes with Synchronizable items; they cannot sync.
+// ThisDeviceOnly classes cannot be used with a synchronizable PasswordStore.
 type Accessible int
 
 const (
@@ -21,6 +21,12 @@ const (
 	AccessibleWhenUnlocked
 	// AccessibleAfterFirstUnlock is kSecAttrAccessibleAfterFirstUnlock.
 	AccessibleAfterFirstUnlock
+	// AccessibleWhenUnlockedThisDeviceOnly prevents migration to another device.
+	AccessibleWhenUnlockedThisDeviceOnly
+	// AccessibleAfterFirstUnlockThisDeviceOnly permits use after the first unlock.
+	AccessibleAfterFirstUnlockThisDeviceOnly
+	// AccessibleWhenPasscodeSetThisDeviceOnly requires a device passcode.
+	AccessibleWhenPasscodeSetThisDeviceOnly
 )
 
 // AccessControlFlag is a SecAccessControlCreateFlags value.
@@ -28,12 +34,23 @@ type AccessControlFlag uint64
 
 const (
 	// AccessControlUserPresence requires Touch ID or the device passcode.
-	// Do not use biometryCurrentSet: fingerprint sets are per-device and break after iCloud sync.
 	AccessControlUserPresence AccessControlFlag = 1 << 0
+	// AccessControlBiometryAny requires any enrolled biometric identity.
+	AccessControlBiometryAny AccessControlFlag = 1 << 1
+	// AccessControlBiometryCurrentSet invalidates access when biometric enrollment changes.
+	// Do not use it for synchronizable items.
+	AccessControlBiometryCurrentSet AccessControlFlag = 1 << 3
+	// AccessControlDevicePasscode requires the device passcode.
+	AccessControlDevicePasscode AccessControlFlag = 1 << 4
+	// AccessControlOr permits any of the specified authentication constraints.
+	AccessControlOr AccessControlFlag = 1 << 14
+	// AccessControlAnd requires all specified authentication constraints.
+	AccessControlAnd AccessControlFlag = 1 << 15
 )
 
-// AccessControl is stored as kSecAttrAccessControl. Do not also set Accessible
-// on the same add; the protection class belongs here.
+// AccessControl sets protection and authentication rules for new items.
+// ThisDeviceOnly protection and nonzero Flags cannot be used with a
+// synchronizable PasswordStore.
 //
 // https://developer.apple.com/documentation/security/secaccesscontrolcreatewithflags
 type AccessControl struct {
@@ -41,7 +58,15 @@ type AccessControl struct {
 	Flags      AccessControlFlag
 }
 
-func (s *securityFramework) accessibleRef(a Accessible) (_CFStringRef, error) {
+func (a Accessible) thisDeviceOnly() bool {
+	switch a {
+	case AccessibleWhenUnlockedThisDeviceOnly, AccessibleAfterFirstUnlockThisDeviceOnly, AccessibleWhenPasscodeSetThisDeviceOnly:
+		return true
+	}
+	return false
+}
+
+func accessibleRef(s *security.Framework, a Accessible) (corefoundation.StringRef, error) {
 	switch a {
 	case AccessibleUnspecified:
 		return 0, nil
@@ -49,41 +74,43 @@ func (s *securityFramework) accessibleRef(a Accessible) (_CFStringRef, error) {
 		return s.AttrAccessibleWhenUnlocked, nil
 	case AccessibleAfterFirstUnlock:
 		return s.AttrAccessibleAfterFirstUnlock, nil
+	case AccessibleWhenUnlockedThisDeviceOnly:
+		return s.AttrAccessibleWhenUnlockedThisDeviceOnly, nil
+	case AccessibleAfterFirstUnlockThisDeviceOnly:
+		return s.AttrAccessibleAfterFirstUnlockThisDeviceOnly, nil
+	case AccessibleWhenPasscodeSetThisDeviceOnly:
+		return s.AttrAccessibleWhenPasscodeSetThisDeviceOnly, nil
 	default:
 		return 0, fmt.Errorf("unknown keychain accessible class %d", a)
 	}
 }
 
-func (s *securityFramework) createAccessControl(cf *coreFoundation, ac AccessControl) (_SecAccessControlRef, error) {
-	prot, err := s.accessibleRef(ac.Protection)
+func createAccessControl(s *security.Framework, ac AccessControl) (security.SecAccessControlRef, error) {
+	prot, err := accessibleRef(s, ac.Protection)
 	if err != nil {
 		return 0, err
 	}
 	if prot == 0 {
 		return 0, fmt.Errorf("AccessControl.Protection is required")
 	}
-	var cfErr _CFErrorRef
-	sac := s.AccessControlCreateWithFlags(kCFAllocatorDefault, _CFTypeRef(prot), uint64(ac.Flags), &cfErr)
+	var cfErr corefoundation.ErrorRef
+	sac := s.AccessControlCreateWithFlags(corefoundation.AllocatorDefault, corefoundation.TypeRef(prot), uint64(ac.Flags), &cfErr)
 	if sac == 0 {
-		msg := "SecAccessControlCreateWithFlags failed"
 		if cfErr != 0 {
-			desc := cf.ErrorCopyDescription(cfErr)
-			msg = cf.CFStringToString(desc)
-			cf.Release(_CFTypeRef(desc))
-			cf.Release(_CFTypeRef(cfErr))
+			return 0, normalizeNativeError(s.ErrorFromCFError(cfErr))
 		}
-		return 0, fmt.Errorf("%s", msg)
+		return 0, fmt.Errorf("SecAccessControlCreateWithFlags failed")
+	}
+	if cfErr != 0 {
+		_ = s.ErrorFromCFError(cfErr)
 	}
 	return sac, nil
 }
 
-func putOptionalBool(attrs map[_CFTypeRef]_CFTypeRef, key _CFStringRef, v *bool, cf *coreFoundation) {
-	if v == nil {
-		return
-	}
-	if *v {
-		attrs[_CFTypeRef(key)] = _CFTypeRef(cf.BooleanTrue)
+func putBool(attrs map[corefoundation.TypeRef]corefoundation.TypeRef, key corefoundation.StringRef, v bool, cf *corefoundation.Framework) {
+	if v {
+		attrs[corefoundation.TypeRef(key)] = corefoundation.TypeRef(cf.BooleanTrue)
 	} else {
-		attrs[_CFTypeRef(key)] = _CFTypeRef(cf.BooleanFalse)
+		attrs[corefoundation.TypeRef(key)] = corefoundation.TypeRef(cf.BooleanFalse)
 	}
 }
