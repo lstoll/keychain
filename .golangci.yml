@@ -1,0 +1,28 @@
+version: "2"
+
+linters:
+  # errcheck, govet, ineffassign, staticcheck and unused.
+  default: standard
+  enable:
+    - copyloopvar
+    - errorlint
+    - gocritic
+    - godot
+    - intrange
+    - misspell
+    - nolintlint
+    - revive
+    - unconvert
+    - usestdlibvars
+  exclusions:
+    rules:
+      # The internal bindings mirror Apple's API; documenting every exported
+      # symbol there adds nothing.
+      - path: ^internal/
+        linters: [revive]
+        text: "^exported:"
+
+formatters:
+  enable:
+    - gofmt
+    - goimports

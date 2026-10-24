@@ -20,10 +20,6 @@ func main() {
 	switch os.Args[1] {
 	case "list-identities":
 		cmdListIdentities(os.Args[2:])
-	case "create-ctk-csr":
-		cmdCreateCTKCSR(os.Args[2:])
-	case "import-ctk-certificate":
-		cmdImportCTKCertificate(os.Args[2:])
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n", os.Args[1])
 		printUsage()
@@ -36,8 +32,6 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "Commands:")
 	fmt.Fprintln(os.Stderr, "  list-identities           List identities")
-	fmt.Fprintln(os.Stderr, "  create-ctk-csr            Create CTK identity and PEM CSR")
-	fmt.Fprintln(os.Stderr, "  import-ctk-certificate    Import signed cert for a CTK CSR")
 }
 
 func cmdListIdentities(args []string) {

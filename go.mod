@@ -1,5 +1,5 @@
 module lds.li/keychain
 
-go 1.25
+go 1.26
 
-require github.com/ebitengine/purego v0.9.1
+require github.com/ebitengine/purego v0.11.2

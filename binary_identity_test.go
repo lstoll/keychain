@@ -21,10 +21,10 @@ func TestGetSelfCDHashes(t *testing.T) {
 	t.Logf("CDHashes: %#v", hash)
 }
 
-func TestGetBinaryIdentity(t *testing.T) {
-	hash, err := GetBinaryIdentity()
+func TestBinaryIdentity(t *testing.T) {
+	hash, err := BinaryIdentity()
 	if err != nil {
-		t.Fatalf("GetBinaryIdentity failed: %v", err)
+		t.Fatalf("BinaryIdentity failed: %v", err)
 	}
 	t.Logf("BinaryIdentity: %s", hash)
 }

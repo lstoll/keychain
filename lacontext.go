@@ -4,10 +4,13 @@ package keychain
 
 import (
 	"fmt"
+	"runtime"
 	"sync"
+	"unsafe"
 
 	"github.com/ebitengine/purego"
 	"github.com/ebitengine/purego/objc"
+	"lds.li/keychain/internal/corefoundation"
 )
 
 // AuthPolicy is an LAPolicy value.
@@ -29,13 +32,18 @@ const (
 	laErrorNotInteractive       int64 = -1004
 )
 
-// AuthContext is an LAContext. Use EvaluatePolicy for an app-level presence
-// prompt, or pass it as kSecUseAuthenticationContext when the item itself has
-// AccessControl + userPresence.
+// AuthContext wraps an LAContext. Use EvaluatePolicy to request authentication,
+// or pass it to a store or key to authenticate under that item's access rules.
 //
 // https://developer.apple.com/documentation/localauthentication/lacontext
 type AuthContext struct {
-	id objc.ID
+	id    objc.ID
+	owner *authContextState
+}
+
+type authContextState struct {
+	id      objc.ID
+	cleanup runtime.Cleanup
 }
 
 var (
@@ -55,7 +63,7 @@ var (
 
 func initLocalAuthentication() error {
 	laOnce.Do(func() {
-		handle, err := dlopen("/System/Library/Frameworks/LocalAuthentication.framework/LocalAuthentication", purego.RTLD_LAZY|purego.RTLD_GLOBAL)
+		handle, err := purego.Dlopen("/System/Library/Frameworks/LocalAuthentication.framework/LocalAuthentication", purego.RTLD_LAZY|purego.RTLD_GLOBAL)
 		if err != nil {
 			laErr = err
 			return
@@ -76,8 +84,8 @@ func initLocalAuthentication() error {
 	return laErr
 }
 
-// NewAuthContext allocates an LAContext. Reuse one per process so a successful
-// EvaluatePolicy is not repeated, and so Keychain can skip a second ACL prompt.
+// NewAuthContext allocates an LAContext. Reuse it across related operations
+// to allow Security.framework to reuse successful authentication.
 func NewAuthContext() (*AuthContext, error) {
 	if err := initLocalAuthentication(); err != nil {
 		return nil, err
@@ -90,20 +98,26 @@ func NewAuthContext() (*AuthContext, error) {
 	if id == 0 {
 		return nil, fmt.Errorf("LAContext init failed")
 	}
-	return &AuthContext{id: id}, nil
+	owner := &authContextState{id: id}
+	owner.cleanup = runtime.AddCleanup(owner, func(id objc.ID) { id.Send(objc.RegisterName("release")) }, id)
+	return &AuthContext{id: id, owner: owner}, nil
 }
 
 // SetLocalizedReason sets the prompt shown if Keychain needs user presence.
 func (c *AuthContext) SetLocalizedReason(reason string) error {
+	defer runtime.KeepAlive(c)
 	if c == nil || c.id == 0 {
 		return fmt.Errorf("nil AuthContext")
 	}
-	cf, err := getCoreFoundation()
+	cf, err := corefoundation.Get()
 	if err != nil {
 		return err
 	}
-	s := cf.StringToCFString(reason)
-	defer cf.Release(_CFTypeRef(s))
+	s, err := cf.CreateString(reason)
+	if err != nil {
+		return err
+	}
+	defer cf.Release(corefoundation.TypeRef(s))
 	objc.Send[objc.ID](c.id, selSetReason, objc.ID(s))
 	return nil
 }
@@ -111,6 +125,7 @@ func (c *AuthContext) SetLocalizedReason(reason string) error {
 // SetTouchIDReuseDuration sets touchIDAuthenticationAllowableReuseDuration.
 // This reuses a recent Mac unlock with Touch ID, not a previous evaluation.
 func (c *AuthContext) SetTouchIDReuseDuration(seconds float64) error {
+	defer runtime.KeepAlive(c)
 	if c == nil || c.id == 0 {
 		return fmt.Errorf("nil AuthContext")
 	}
@@ -139,18 +154,22 @@ func MaximumTouchIDReuseDuration() (float64, error) {
 // waits for the reply. Policy DeviceOwnerAuthentication is Touch ID with
 // passcode fallback.
 func (c *AuthContext) EvaluatePolicy(policy AuthPolicy, reason string) error {
+	defer runtime.KeepAlive(c)
 	if c == nil || c.id == 0 {
 		return fmt.Errorf("nil AuthContext")
 	}
 	if reason == "" {
 		return fmt.Errorf("EvaluatePolicy requires a localized reason")
 	}
-	cf, err := getCoreFoundation()
+	cf, err := corefoundation.Get()
 	if err != nil {
 		return err
 	}
-	s := cf.StringToCFString(reason)
-	defer cf.Release(_CFTypeRef(s))
+	s, err := cf.CreateString(reason)
+	if err != nil {
+		return err
+	}
+	defer cf.Release(corefoundation.TypeRef(s))
 
 	done := make(chan error, 1)
 	block := objc.NewBlock(func(_ objc.Block, success uint8, nsErr objc.ID) {
@@ -186,5 +205,9 @@ func laReplyError(nsErr objc.ID) error {
 	case laErrorNotInteractive:
 		errCode = ErrorCodeInteractionNotAllowed
 	}
-	return &Error{code: errCode, message: msg}
+	return &Error{code: errCode, message: msg, domain: "com.apple.LocalAuthentication", status: code}
 }
+
+// tPtr converts a symbol address to a typed pointer without a uintptr to
+// unsafe.Pointer conversion that vet flags.
+func tPtr[T any](v uintptr) *T { return *(**T)(unsafe.Pointer(&v)) }
